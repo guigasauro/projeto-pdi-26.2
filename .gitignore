@@ -1,0 +1,12 @@
+data/raw/
+data/clips/
+models/
+outputs/*
+!outputs/figures/
+outputs/figures/*
+!outputs/figures/final/
+.venv/
+*.mp4
+*.pt
+__pycache__/
+.ipynb_checkpoints/
