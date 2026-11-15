@@ -23,13 +23,17 @@ def clean_mask(mask: np.ndarray, kernel_size: int) -> np.ndarray:
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    field = np.zeros_like(mask)
-    if not contours:
+    # Linha extra de 255 abaixo da imagem: jogador cortado pela borda inferior abre um "entalhe"
+    # que o contorno externo não fecha; com a linha ele vira buraco e é preenchido.
+    # shortcut: supõe que a borda inferior é gramado (câmera de transmissão); rever se a câmera inclinar para cima.
+    padded = np.vstack([mask, np.full((1, mask.shape[1]), 255, np.uint8)])
+    contours, _ = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    field = np.zeros_like(padded)
+    if not mask.any():
         log.warning("nenhum pixel de gramado encontrado")
-        return field
+        return field[:-1]
     cv2.drawContours(field, [max(contours, key=cv2.contourArea)], -1, 255, cv2.FILLED)
-    return field
+    return field[:-1]
 
 
 def field_mask(img_bgr: np.ndarray, cfg: dict) -> np.ndarray:

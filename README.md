@@ -5,7 +5,12 @@ Projeto final de GDSCO0055 – Introdução ao PDI (UFPB, 2026.2). Detalhes em `
 ## Setup
 ```bash
 python -m venv .venv && source .venv/bin/activate
+# torch primeiro (fora do requirements.txt, depende da máquina):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu     # sem GPU
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 # GPU NVIDIA (só precisa do driver)
 pip install -r requirements.txt
+# pesos do YOLO (~5 MB) em models/:
+cd models && python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')" && cd ..
 pytest -q
 ```
 

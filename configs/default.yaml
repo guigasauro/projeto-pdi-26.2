@@ -1,5 +1,13 @@
 video:
   frame_step: 2            # processar 1 a cada N frames
+detection:
+  model: models/yolo11n.pt
+  device: auto             # auto | cpu | cuda
+  classes: [0]             # COCO: 0 = person
+  conf: 0.3
+  min_area: 150            # px²
+  imgsz: 1280              # clip01, 50 frames vs. GT: recall 0.76 (640) → 0.83 (960) → 0.86 (1280); jogadores distantes são pequenos
+  foot_margin: 10          # px de dilatação da máscara no teste do pé; clip01: recall 0.88 (0) → 0.94 (10), precisão 0.94 nos dois (sem filtro: 0.87)
 field_mask:
   h_range: [35, 85]        # clip01: grama ao sol tem pico em H=35-36, torcida amarela em 30-32; h_min=38 perderia 30% da grama
   s_min: 40

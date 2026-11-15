@@ -26,6 +26,17 @@ def test_field_mask_synthetic():
     assert mask[70:].min() == 255            # gramado inteiro, jogador e linha preenchidos
 
 
+def test_field_mask_player_cut_at_bottom_border():
+    img_bgr = synthetic_frame()
+    img_bgr[170:, 200:230] = (0, 0, 200)     # jogador cortado pela borda inferior
+    mask = field_mask(img_bgr, CFG)
+    assert mask[170:, 200:230].min() == 255
+
+
+def test_field_mask_empty():
+    assert field_mask(np.full((50, 50, 3), 128, np.uint8), CFG).max() == 0
+
+
 def test_hue_histogram_peak_in_range():
     hist = hue_histogram([synthetic_frame()], CFG["s_min"], CFG["v_min"])
     assert CFG["h_range"][0] <= hist.argmax() <= CFG["h_range"][1]
