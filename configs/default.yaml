@@ -1,5 +1,5 @@
 video:
-  frame_step: 2            # processar 1 a cada N frames
+  frame_step: 1            # processar 1 a cada N frames; jogo corrido (SNGS-054/040/026): step 1 reduz IDs por jogador em 20-30% vs. step 2
 detection:
   model: models/yolo11n.pt
   device: auto             # auto | cpu | cuda
@@ -17,7 +17,10 @@ tracking:
   match_thresh: 0.8        # custo máximo 1-IoU na associação (ByteTrack/supervision)
   min_consecutive: 1
 field_mask:
-  h_range: [35, 85]        # clip01: grama ao sol tem pico em H=35-36, torcida amarela em 30-32; h_min=38 perderia 30% da grama
+  # clip01: grama ao sol tem pico em H=35-36, torcida amarela em 30-32. h_min=35 ficava no limite: na SNGS-040, 5% do campo
+  # tem H=35 e 1-2 níveis de diferença de decodificação já apagavam a área ensolarada (pés de jogadores GT dentro: 0.88).
+  # h_min=33 → 0.98 (ajuste 056+040) e 0.977 (validação 054+026); abaixo de 33 não melhora. ExG+Otsu: 0.62 (pior).
+  h_range: [33, 85]
   s_min: 40
   v_min: 25               # clip01: 1º percentil do V da grama na sombra = 26 (com 40, 1/3 da sombra sumia)
   morph_kernel: 11         # clip01: com 7, linhas brancas + jogadores separavam pedaços do campo (até 1,2% da imagem); 11 fecha
