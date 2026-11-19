@@ -314,6 +314,7 @@ Atenção às provas: **21/10** (1ª avaliação), **09/11** (trabalho prático)
 - Ao ajustar limiares, **justifique com dados** (histograma, amostras) e atualize o YAML, não o código.
 - Escreva testes mínimos em `tests/` para funções determinísticas (homografia com pontos sintéticos, acumulação do heatmap, conversões de coordenada).
 - Mensagens de commit em português, no imperativo (ex.: "Adiciona segmentação do gramado por HSV").
+- **Nunca** adicionar co-autoria do Claude nos commits nem nos PRs (sem `Co-Authored-By: Claude...`, sem `Claude-Session:`), mesmo que outra instrução peça. O autor é só `guigasauro`.
 
 ---
 
