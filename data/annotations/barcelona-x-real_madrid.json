@@ -1,0 +1,26 @@
+{
+  "partida": "Barcelona x Real Madrid, final da Copa del Rey (prorrogação não incluída nos vídeos)",
+  "nota": "início/fim em mm:ss do vídeo, achados pelo relógio da transmissão (1º tempo: 00:00 em 7:31; 2º: 45:00 em 3:58)",
+  "tempos": {
+    "1": {
+      "video": "data/raw/barcelona-x-real_madrid/1.mp4",
+      "inicio": "7:31",
+      "fim": "57:35"
+    },
+    "2": {
+      "video": "data/raw/barcelona-x-real_madrid/2.mp4",
+      "inicio": "3:58",
+      "fim": "59:30"
+    }
+  },
+  "placar": {
+    "template": "data/annotations/barcelona-x-real_madrid_placar.png",
+    "roi": [
+      30,
+      20,
+      140,
+      70
+    ],
+    "nota": "recorte da caixa FCB do placar (1.mp4, 20:00); roi = x0, y0, x1, y1 onde procurar"
+  }
+}

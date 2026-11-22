@@ -59,3 +59,17 @@ heatmap:
   alpha: 0.85              # opacidade máxima do mapa sobre o campo
   min_player_s: 5.0        # heatmap por jogador só para IDs com >= 5 s de posições (ID curto = fragmento do tracker)
   gamma: 0.5               # clip01: um jogador parado concentra o máximo e o resto do mapa ficava quase transparente
+shots:
+  small_size: [256, 144]   # quadro reduzido para histograma e gramado (as medidas são globais, não precisam de detalhe)
+  hist_bins: [16, 4, 4]    # H x S x V
+  cut_thresh: 0.3          # Bhattacharyya entre quadros seguidos; Barça x Real: p99 = 0.19 (movimento normal), cortes de 0.3 a 0.95
+  cut_min_frames: 5        # transições de vários quadros contam como um corte só
+  board_thresh: 0.8        # correlação com o placar: bimodal (~1.0 com placar, ~0.25 sem), vale entre 0.4 e 0.95
+  # tomada da câmera principal ao vivo: gráfico gramado × altura dos jogadores (Barça x Real) tem um grupo
+  # isolado com gramado > 0.6, altura 40-80 px e > 8 pessoas; close-ups ficam acima de 150 px
+  main_grass_min: 0.5      # mediana da fração de gramado na tomada
+  main_height_max: 120     # altura mediana (px) das pessoas no quadro central
+  main_people_min: 6       # pessoas no gramado no quadro central
+  main_board_min: 0.5      # fração dos quadros com placar (sem placar = replay/gráfico)
+  probe_min_frames: 15     # tomadas mais curtas não passam pelo YOLO e contam como "outras"
+  board_median_frames: 15  # mediana de 0,5 s na presença do placar (piscadas do gráfico não viram corte)
