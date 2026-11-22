@@ -49,15 +49,26 @@ def eval_homography(args: argparse.Namespace, cfg: dict) -> None:
         H, _ = homography.compute_homography(*feet[f0], cfg["homography"]["ransac_thresh_m"])
         label = "referência GT"
     frames = sorted(feet)
-    err = [homography.reprojection_error(H, *feet[i]) for i in frames]
-    med = np.array([np.median(e) for e in err]); p90 = np.array([np.percentile(e, 90) for e in err])
-    print(f"H {label} (frame {f0}): erro no frame {f0} = {med[frames.index(f0)]:.2f} m (mediana) | "
-          f"ao longo do clipe: mediana {np.median(med):.2f} m, pior frame {med.max():.2f} m (frame {frames[int(med.argmax())]})")
+    curves = {f"H fixa ({label})": [H] * len(frames)}
+    if args.propagate:
+        stem = Path(args.annotation).stem
+        dets = np.load(f"outputs/{stem}/cache/detections.npz")
+        dets = [dets[k] for k in sorted(dets.files, key=int)]
+        video = args.video or f"data/clips/{stem}.mp4"
+        Hs, n_inl = homography.propagate(video, H, f0, frames[-1] + 1, dets, cfg)
+        print(f"propagação: inliers por quadro mediana {np.median(n_inl[1:]):.0f}, mínimo {n_inl[1:].min()}")
+        curves[f"v2 propagada ({label})"] = [Hs[i - f0] for i in frames]
     fig, ax = plt.subplots(figsize=(8, 3))
-    ax.plot(frames, med, label="mediana"); ax.plot(frames, p90, alpha=.6, label="percentil 90")
-    ax.set_xlabel("frame"); ax.set_ylabel("erro (m)"); ax.set_title(f"Erro dos pés projetados com H fixa ({label})")
+    for name, Hl in curves.items():
+        med = np.array([np.median(homography.reprojection_error(h, *feet[i])) if np.isfinite(h).all() else np.nan
+                        for h, i in zip(Hl, frames)])
+        print(f"{name}: erro no frame {f0} = {med[frames.index(f0)]:.2f} m (mediana) | ao longo do clipe: "
+              f"mediana {np.nanmedian(med):.2f} m, pior {np.nanmax(med):.2f} m (frame {frames[int(np.nanargmax(med))]})")
+        ax.plot(frames, med, label=name)
+    ax.set_xlabel("frame"); ax.set_ylabel("erro mediano (m)"); ax.set_title("Erro dos pés do GT projetados no campo")
     ax.legend(); ax.grid(alpha=.3); fig.tight_layout()
-    out = Path("outputs/figures") / f"05_erro_homografia_{Path(args.annotation).stem}{'_gtref' if args.gt_reference else ''}.png"
+    out = Path("outputs/figures") / (f"05_erro_homografia_{Path(args.annotation).stem}"
+                                     f"{'_gtref' if args.gt_reference else ''}{'_v2' if args.propagate else ''}.png")
     fig.savefig(out, dpi=120); print("figura:", out)
 
 
@@ -221,7 +232,8 @@ def eval_heatmap(args: argparse.Namespace, cfg: dict) -> None:
     ref = np.array([gt[i][2][int(np.argmax(iou(tracks[i][j:j + 1, :4], gt[i][0])[0]))] for i, j, _ in pairs])
     for name, p in (("pé", np.c_[(box[:, 0] + box[:, 2]) / 2, box[:, 3]]),
                     ("centro", np.c_[(box[:, 0] + box[:, 2]) / 2, (box[:, 1] + box[:, 3]) / 2])):
-        err = np.linalg.norm(homography.project(r["H"], p) - ref, axis=1)
+        proj = np.array([homography.project(r["Hs"][i], q[None])[0] for (i, _, _), q in zip(pairs, p)])
+        err = np.linalg.norm(proj - ref, axis=1)
         print(f"ponto {name}: erro mediano {np.nanmedian(err):.2f} m, p90 {np.nanpercentile(err, 90):.2f} m ({len(err)} detecções)")
 
 
@@ -230,6 +242,7 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     h = sub.add_parser("homography")
     h.add_argument("annotation"); h.add_argument("--gt", required=True); h.add_argument("--gt-reference", action="store_true")
+    h.add_argument("--propagate", action="store_true"); h.add_argument("--video", default=None)
     t = sub.add_parser("team")
     t.add_argument("video"); t.add_argument("--gt", required=True)
     t.add_argument("--tracks", default="outputs/clip01/cache/tracks.npz")

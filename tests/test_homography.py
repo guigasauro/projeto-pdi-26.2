@@ -33,3 +33,18 @@ def test_save_load_roundtrip(tmp_path):
     save(tmp_path / "c.json", H_TRUE, PTS_IMG[:2], ["a", "b"], frame=0)
     H, data = load(tmp_path / "c.json")
     assert np.allclose(H, H_TRUE) and [p["name"] for p in data["points"]] == ["a", "b"]
+
+
+def test_inter_frame_recovers_known_warp():
+    import cv2
+    from src.homography import inter_frame
+    rng = np.random.default_rng(0)
+    img = cv2.GaussianBlur(rng.integers(0, 255, (360, 480), np.uint8), (5, 5), 0)   # textura
+    G_true = np.array([[1.02, 0.01, -6.0], [-0.01, 0.99, 4.0], [1e-5, 0.0, 1.0]])
+    warped = cv2.warpPerspective(img, np.linalg.inv(G_true), (480, 360))             # quadro "atual"
+    sift = cv2.SIFT_create()
+    kp0, d0 = sift.detectAndCompute(img, None)
+    kp1, d1 = sift.detectAndCompute(warped, None)
+    G, n = inter_frame(kp0, d0, kp1, d1, {"ratio": 0.75, "min_inliers": 30, "ransac_px": 3.0})
+    pts = np.float32([[100, 100], [400, 80], [240, 300]]).reshape(-1, 1, 2)
+    assert n >= 30 and np.allclose(cv2.perspectiveTransform(pts, G), cv2.perspectiveTransform(pts, G_true), atol=1.0)

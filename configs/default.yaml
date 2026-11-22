@@ -17,11 +17,23 @@ tracking:
   match_thresh: 0.8        # custo máximo 1-IoU na associação (ByteTrack/supervision)
   min_consecutive: 1
 homography:
-  mode: manual             # manual | propagate | auto
+  mode: propagate          # manual (v1, H fixa) | propagate (v2, a partir da anotação manual)
   ransac_thresh_m: 1.0     # erro máximo (m) para um clique contar como inlier
-  # v1 (H fixa) só vale com a câmera parada. clip01: erro dos pés GT sobe >0,25 m a partir do frame 576
+  # modo manual: H fixa só vale com a câmera parada. clip01: erro dos pés GT sobe >0,25 m a partir do frame 576
   # (a câmera passa a acompanhar o lance); frames depois disso ficam fora do heatmap até a v2.
   valid_until_frame: 575
+  # v2 (propagação): pontos no gramado, fora dos jogadores; G até o quadro-chave por RANSAC
+  # clip01 vs. GT (H inicial = referência GT, erro 0.04 m): H fixa pior 13.2 m; ORB pior 2.8 m (40 ms/quadro);
+  # SIFT pior 0.58 m, mediana 0.03 m (250 ms/quadro, 1080p). ORB perde no borrão do giro da câmera.
+  features: sift           # orb | sift
+  n_features: 3000
+  sift_contrast: 0.01      # limiar de contraste do SIFT (padrão 0.04 quase não acha pontos no gramado)
+  ratio: 0.75              # teste da razão de Lowe no casamento
+  ransac_px: 3.0           # erro máximo (px) de um inlier entre quadros
+  min_inliers: 30          # menos que isso = propagação perdida (corte, borrão, campo sem textura)
+  keyframe_inliers: 150    # abaixo disso o quadro atual vira o novo quadro-chave
+  mask_erode: 15           # px: afasta os pontos da borda do gramado (placas não estão no plano)
+  player_margin: 5         # px em volta das caixas dos jogadores
 # clip01, 7852 detecções de jogadores de linha casadas com o GT (scripts/evaluate.py team), acurácia por frame:
 # RGB/Lab com L: ~0.59 (k-means separa sol de sombra: L varia ±50 no mesmo time); a*b*: 0.989; H-S: 0.994.
 # Remover a grama: a*b* 0.870 → 0.989 (a média puxa para o verde); H-S quase não muda (0.992 → 0.994).

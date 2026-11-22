@@ -32,16 +32,16 @@ def team_labels(video: str, tracks: list[np.ndarray], cfg: dict, fps: float) -> 
     return team_classifier.vote(tracks, labels, win)
 
 
-def positions(tracks: list[np.ndarray], labels: list[np.ndarray], H: np.ndarray, last_frame: int,
-              point: str = "foot") -> np.ndarray:
-    """Posições no campo (N, 5): frame, id, time, X, Y. Só frames <= `last_frame` (H válida).
+def positions(tracks: list[np.ndarray], labels: list[np.ndarray], Hs: np.ndarray, point: str = "foot") -> np.ndarray:
+    """Posições no campo (N, 5): frame, id, time, X, Y, com a homografia do próprio quadro `Hs[f]`.
+    Quadros sem homografia válida (NaN) ficam de fora.
     `point` = `foot` (centro da base da bbox) ou `center` (centro da bbox, para a ablação)."""
     rows = []
-    for f, (t, lab) in enumerate(zip(tracks[:last_frame + 1], labels)):
-        if not len(t):
+    for f, (t, lab) in enumerate(zip(tracks, labels)):
+        if not len(t) or f >= len(Hs) or not np.isfinite(Hs[f]).all():
             continue
         p = foot_points(t) if point == "foot" else np.c_[(t[:, 0] + t[:, 2]) / 2, (t[:, 1] + t[:, 3]) / 2]
-        rows.append(np.c_[np.full(len(t), f), t[:, 6], lab, homography.project(H, p)])
+        rows.append(np.c_[np.full(len(t), f), t[:, 6], lab, homography.project(Hs[f], p)])
     return np.vstack(rows) if rows else np.empty((0, 5))
 
 
@@ -68,6 +68,23 @@ def player_heatmaps(pos: np.ndarray, min_frames: int, cfg: dict) -> dict[int, np
     return out
 
 
+def homographies(video: str, H0: np.ndarray, frame0: int, dets: list[np.ndarray], cfg: dict,
+                 cache: Path) -> np.ndarray:
+    """Homografia imagem→campo de cada quadro (N, 3, 3), NaN onde não há estimativa válida.
+    `manual` (v1): H0 fixa até `valid_until_frame`; `propagate` (v2): propagação a partir de H0."""
+    hc, n = cfg["homography"], len(dets)
+    Hs = np.full((n, 3, 3), np.nan)
+    if hc["mode"] == "manual":
+        Hs[frame0:min(hc["valid_until_frame"], n - 1) + 1] = H0
+        return Hs
+    if cache.exists():
+        return np.load(cache)
+    Hs[frame0:], _ = homography.propagate(video, H0, frame0, n, dets, cfg)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    np.save(cache, Hs)
+    return Hs
+
+
 def run(video: str, cfg: dict, out_dir: str | Path, annotation: str | Path) -> dict:
     """Pipeline completo; salva os heatmaps em `<out>/` e devolve os intermediários."""
     out_dir = Path(out_dir)
@@ -76,12 +93,14 @@ def run(video: str, cfg: dict, out_dir: str | Path, annotation: str | Path) -> d
     dets = detection.detect_video(video, cfg, cache / "detections.npz")
     tracks = tracking.track_cached(dets, cfg, fps, cache / "tracks.npz")
     labels = _load_or(cache / "teams.npz", lambda: team_labels(video, tracks, cfg, fps))
-    H, _ = homography.load(annotation)
-    last = min(cfg["homography"]["valid_until_frame"], len(tracks) - 1)
-    pos = positions(tracks, labels, H, last)
-    n_frames = len(range(0, last + 1, cfg["video"]["frame_step"]))
+    H, ann = homography.load(annotation)
+    Hs = homographies(video, H, ann["frame"], dets, cfg, cache / "homographies.npy")
+    valid = np.isfinite(Hs).all((1, 2))
+    last = int(np.flatnonzero(valid).max())
+    pos = positions(tracks, labels, Hs)
+    n_frames = int(valid[::cfg["video"]["frame_step"]].sum())
     maps = team_heatmaps(pos, n_frames, cfg)
-    log.info("%d posições em %d frames (0..%d); times: %s", len(pos), n_frames, last, list(maps))
+    log.info("%d posições em %d frames com homografia (0..%d); times: %s", len(pos), n_frames, last, list(maps))
     out_dir.mkdir(parents=True, exist_ok=True)
     vmax = max(m.max() for m in maps.values())
     for team, m in maps.items():
@@ -102,5 +121,5 @@ def run(video: str, cfg: dict, out_dir: str | Path, annotation: str | Path) -> d
         grid = np.vstack([np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)])
         cv2.imwrite(str(out_dir / "heatmap_jogadores.png"), cv2.resize(grid, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA))
     log.info("heatmaps: %d times, %d jogadores (IDs com >= %.0f s)", len(maps), len(players), cfg["heatmap"]["min_player_s"])
-    return {"fps": fps, "tracks": tracks, "labels": labels, "H": H, "positions": pos, "maps": maps,
+    return {"fps": fps, "tracks": tracks, "labels": labels, "Hs": Hs, "positions": pos, "maps": maps,
             "n_frames": n_frames, "last_frame": last}

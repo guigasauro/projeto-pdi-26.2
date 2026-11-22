@@ -100,3 +100,77 @@ def debug_view(img_bgr: np.ndarray, H: np.ndarray, polylines_pitch: list[np.ndar
             cv2.circle(view, (int(x), int(y)), 7, (0, 255, 0), 2)
             cv2.circle(view, (int(u), int(v)), 3, (0, 0, 255), -1)
     return view
+
+
+# ── v2: propagação entre quadros ─────────────────────────────────────────────
+
+def plane_mask(mask_field: np.ndarray, dets: np.ndarray, cfg: dict) -> np.ndarray:
+    """Onde procurar pontos que pertencem ao plano do campo: máscara do gramado erodida (a borda com
+    as placas não está no plano) menos as caixas dos jogadores, dilatadas de `player_margin` px
+    (jogadores se movem; só o campo é rígido)."""
+    e = cfg["mask_erode"]
+    m = cv2.erode(mask_field, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * e + 1, 2 * e + 1)))
+    p = cfg["player_margin"]
+    for x1, y1, x2, y2 in np.asarray(dets, float).reshape(-1, 6)[:, :4] if len(dets) else []:
+        m[max(0, int(y1) - p):int(y2) + p, max(0, int(x1) - p):int(x2) + p] = 0
+    return m
+
+
+def inter_frame(kp_prev, des_prev, kp_cur, des_cur, cfg: dict) -> tuple[np.ndarray | None, int]:
+    """Homografia G que leva pontos do quadro atual para o de referência: casamento de descritores
+    (Hamming para ORB, L2 para SIFT), teste da razão de Lowe e RANSAC. Devolve (G, nº de inliers); G = None se houver poucos inliers."""
+    if des_prev is None or des_cur is None or len(des_prev) < 4 or len(des_cur) < 4:
+        return None, 0
+    norm = cv2.NORM_HAMMING if des_cur.dtype == np.uint8 else cv2.NORM_L2   # ORB binário | SIFT float
+    pairs = cv2.BFMatcher(norm).knnMatch(des_cur, des_prev, k=2)
+    good = [m for m, *n in pairs if n and m.distance < cfg["ratio"] * n[0].distance]
+    if len(good) < cfg["min_inliers"]:
+        return None, len(good)
+    src = np.float32([kp_cur[m.queryIdx].pt for m in good])
+    dst = np.float32([kp_prev[m.trainIdx].pt for m in good])
+    G, inl = cv2.findHomography(src, dst, cv2.RANSAC, cfg["ransac_px"])
+    n = int(inl.sum()) if inl is not None else 0
+    return (G, n) if G is not None and n >= cfg["min_inliers"] else (None, n)
+
+
+def propagate(video: str, H0: np.ndarray, frame0: int, frame1: int, dets: list[np.ndarray] | None,
+              cfg: dict) -> tuple[np.ndarray, np.ndarray]:
+    """v2: a partir de H0 (imagem→campo no quadro `frame0`), estima H_t até `frame1` (exclusivo).
+    Cada quadro é casado com o último quadro-chave k (não com o anterior): H_t = H_k · G_{t→k}.
+    Um novo quadro-chave só é criado quando os inliers caem abaixo de `keyframe_inliers` (pouca
+    sobreposição), o que reduz o número de composições e, com ele, a deriva acumulada.
+    `dets[t]` são as detecções do quadro t (caixas excluídas da busca de pontos).
+    Devolve (H por quadro (N, 3, 3), inliers por quadro); se a estimativa falhar, H fica NaN
+    daí em diante (precisa de reancoragem). `cfg` é o YAML inteiro."""
+    from src.field_mask import field_mask
+    hc = cfg["homography"]
+    # SIFT do OpenCV escolhe os N melhores pontos da imagem inteira antes de aplicar a máscara (a torcida
+    # ficava com todos): detecta sem limite e mantém os N de maior resposta dentro da máscara
+    feat = (cv2.SIFT_create(0, contrastThreshold=hc["sift_contrast"]) if hc["features"] == "sift"
+            else cv2.ORB_create(hc["n_features"]))
+    cap = cv2.VideoCapture(video)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame0)
+    Hs = np.full((frame1 - frame0, 3, 3), np.nan)
+    n_inl = np.zeros(frame1 - frame0, int)
+    key = None                                   # (keypoints, descritores, H do quadro-chave)
+    for i, t in enumerate(range(frame0, frame1)):
+        ok, img = cap.read()
+        if not ok:
+            break
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        m = plane_mask(field_mask(img, cfg["field_mask"]), dets[t] if dets is not None else [], hc)
+        kp = sorted(feat.detect(gray, m), key=lambda k: -k.response)[:hc["n_features"]]
+        kp, des = feat.compute(gray, kp)
+        if key is None:
+            H = np.asarray(H0, float)
+        else:
+            G, n_inl[i] = inter_frame(key[0], key[1], kp, des, hc)
+            if G is None:
+                log.warning("propagação perdida no quadro %d (%d inliers)", t, n_inl[i])
+                break
+            H = key[2] @ G
+            H /= H[2, 2]
+        Hs[i] = H
+        if key is None or n_inl[i] < hc["keyframe_inliers"]:
+            key = (kp, des, H)
+    return Hs, n_inl
