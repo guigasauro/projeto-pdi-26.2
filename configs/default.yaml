@@ -19,6 +19,24 @@ tracking:
 homography:
   mode: manual             # manual | propagate | auto
   ransac_thresh_m: 1.0     # erro máximo (m) para um clique contar como inlier
+  # v1 (H fixa) só vale com a câmera parada. clip01: erro dos pés GT sobe >0,25 m a partir do frame 576
+  # (a câmera passa a acompanhar o lance); frames depois disso ficam fora do heatmap até a v2.
+  valid_until_frame: 575
+# clip01, 7852 detecções de jogadores de linha casadas com o GT (scripts/evaluate.py team), acurácia por frame:
+# RGB/Lab com L: ~0.59 (k-means separa sol de sombra: L varia ±50 no mesmo time); a*b*: 0.989; H-S: 0.994.
+# Remover a grama: a*b* 0.870 → 0.989 (a média puxa para o verde); H-S quase não muda (0.992 → 0.994).
+# Votação no track inteiro piora (0.961): IDs 12 e 17 trocam de jogador entre times; janela de 1 s → 0.999.
+# Árbitro (preto) cai no time verde-branco com qualquer descritor/k (cores neutras em H-S e a*b*).
+team:
+  torso: [0.2, 0.6, 0.2, 0.8]  # frações [y0, y1, x0, x1] da bbox
+  remove_grass: true
+  descriptor: hs_hist      # rgb_mean | lab_mean | ab_mean | hs_hist
+  hs_bins: [16, 8]
+  min_pixels: 20           # recortes com menos pixels não-grama ficam sem rótulo
+  calib_frames: 50
+  k: 2
+  seed: 0
+  vote_window_s: 1.0       # moda dos rótulos do mesmo ID a ±1 s (null = track inteiro); 0.25 s: 0.994, 2 s: 0.997
 pitch:
   length_m: 105            # FIFA; SoccerNet também assume 105 x 68
   width_m: 68
