@@ -28,3 +28,15 @@ SoccerNetDownloader(LocalDirectory="data/raw/SoccerNetGS").downloadDataTask(task
 | `data/clips/clip01.mp4` | `valid/SNGS-056` (pênalti, 750 frames), recodificado com `cv2.VideoWriter` (mp4v, PSNR ≈ 30 dB vs. JPG original) | Menor movimento de câmera do split (~395 px acumulados em 30 s; mediana 4900 px) e grande área inteira visível |
 
 Coordenadas do SoccerNet no campo têm origem no **centro** (x ∈ [-52.5, 52.5], y ∈ [-34, 34]); este projeto usa origem no canto superior esquerdo (somar 52,5 e 34).
+
+## Uso
+```bash
+python scripts/annotate_homography.py data/clips/clip01.mp4     # marca >= 4 pontos do campo (v1, uma vez por clipe)
+python scripts/run_pipeline.py data/clips/clip01.mp4            # heatmaps em outputs/clip01/ (cache em outputs/clip01/cache/)
+# métricas e figuras vs. GT do SoccerNet (outputs/figures/):
+GT=data/raw/SoccerNetGS/valid/SNGS-056/Labels-GameState.json
+python scripts/evaluate.py homography data/annotations/clip01.json --gt $GT
+python scripts/evaluate.py team data/clips/clip01.mp4 --gt $GT
+python scripts/evaluate.py heatmap data/clips/clip01.mp4 --gt $GT
+```
+A homografia v1 é fixa: só vale enquanto a câmera está parada (`homography.valid_until_frame` no YAML).

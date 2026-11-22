@@ -153,7 +153,7 @@ dos pés em metros no plano do campo.
 
 O desenvolvimento foi feito em uma única sequência, aqui chamada de
 \texttt{clip01} (SNGS-056, conjunto de validação), escolhida por ter a câmera parada
-na maior parte do tempo: é uma cobrança de falta próxima à grande área, com 15
+na maior parte do tempo: é uma cobrança de pênalti, com 15
 pessoas em campo (dois times, um goleiro e um árbitro). Para verificar se os
 parâmetros generalizam, três sequências de jogo corrido do mesmo conjunto
 (SNGS-054, SNGS-040 e SNGS-026) foram usadas apenas como validação.
@@ -342,14 +342,42 @@ através de uma troca de identificador (Seção~\ref{sec:res_times}).
 % ── 2.8 ──────────────────────────────────────────────────────────────────────
 \subsection{Mapa de Calor}
 
-\pendente{etapa em implementação.} O plano é: projetar o ponto do pé de cada jogador
-com $\mathbf{H}$ em cada quadro válido; acumular as posições numa grade de
-$0{,}5$~m ($210\times136$ células), normalizando pelo número de quadros (tempo de
-permanência); suavizar o mapa com um kernel gaussiano, tanto por convolução
-espacial (implementada manualmente e comparada com \texttt{cv2.GaussianBlur}) quanto
-no domínio da frequência (DFT, filtro passa-baixa gaussiano, DFT inversa),
-verificando a equivalência prevista pelo teorema da convolução; e aplicar um
-colormap sobre o desenho do campo.
+Para cada quadro válido ($t \le 575$), o ponto do pé de cada jogador é projetado
+no campo com $\mathbf{H}$, e as posições fora do campo são descartadas. O campo é
+\textbf{amostrado} numa grade de células de $0{,}5$~m ($136\times210$ células), e cada
+posição é \textbf{quantizada} na célula que a contém. A contagem de cada célula é
+dividida pelo número de quadros, de modo que o valor final representa o número médio
+de jogadores daquele time na célula (tempo de permanência). Para o mapa por jogador,
+a contagem de cada identificador é normalizada para soma 1, e só são considerados os
+identificadores com pelo menos 5~s de posições (os mais curtos são fragmentos do
+rastreador).
+
+A grade é então suavizada por um kernel gaussiano de desvio $\sigma = 2$~m
+(4 células), truncado em $3\sigma$. Isso foi feito de três formas:
+
+\begin{itemize}
+  \item \textbf{Convolução espacial manual}: a imagem é preenchida com zeros, e a saída
+        é a soma das cópias deslocadas da grade ponderadas pelos coeficientes do
+        kernel, ou seja, um laço por elemento do kernel em vez de um laço por pixel;
+  \item \textbf{\texttt{cv2.GaussianBlur}}, com o mesmo tamanho de kernel e a mesma borda
+        zero, como referência;
+  \item \textbf{Domínio da frequência}: a grade é preenchida com $3\sigma$ de zeros de
+        cada lado (para a convolução circular da DFT não misturar bordas opostas do
+        campo), transformada com a DFT, multiplicada pelo filtro passa-baixa gaussiano
+        \begin{equation}
+        H(u, v) = e^{-2\pi^2\sigma^2 (u^2 + v^2)},
+        \end{equation}
+        que é a transformada de uma gaussiana de desvio $\sigma$, e trazida de volta com
+        a DFT inversa. Pelo teorema da convolução, o resultado deve coincidir com o da
+        convolução espacial.
+\end{itemize}
+
+Por fim, a \textbf{pseudocoloração} normaliza o mapa pelo seu máximo, aplica uma
+correção gama ($\gamma = 0{,}5$) e mapeia o resultado no colormap \textit{inferno},
+misturado ao desenho do campo com opacidade proporcional à intensidade. A correção
+gama é necessária porque um jogador parado concentra o máximo do mapa e, sem ela, o
+restante ficava quase transparente. O mapa de diferença entre os times usa um
+colormap divergente (vermelho para o time 0, azul para o time 1).
 
 % ── 2.9 ──────────────────────────────────────────────────────────────────────
 \subsection{Protocolo de Avaliação e Ferramentas}
@@ -586,15 +614,113 @@ Figuras~\ref{fig:times} e~\ref{fig:times_ab} mostram exemplos de recortes e a di
 % ── 3.6 ──────────────────────────────────────────────────────────────────────
 \subsection{Mapas de Calor}
 
-\pendente{mapas por time e por jogador; espacial vs.\ frequência (equivalência e
-tempo); efeito da resolução da grade (0,25 / 0,5 / 1 / 2~m); ponto do pé vs.\ centro
-da caixa.}
+A Figura~\ref{fig:heat_times} mostra os mapas por time nos quadros 0--575 do
+\texttt{clip01}. A disposição é a esperada para um pênalti: os jogadores dos dois times
+alinhados na entrada da grande área e na meia-lua, o cobrador junto à marca do pênalti
+e o goleiro sobre a linha do gol.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{07_heatmap_times.png}
+    \caption{Mapas de calor do \texttt{clip01} (quadros 0--575, grande área direita):
+             time 0 (amarelo), time 1 (verde e branco, com goleiro e árbitro) e diferença
+             entre os dois (vermelho = mais time 0, azul = mais time 1).}
+    \label{fig:heat_times}
+\end{figure}
+
+\paragraph{Comparação com o gabarito.} Para validar o mapa como um todo, geramos o
+mesmo mapa (mesmos quadros, grade e suavização) a partir das posições do gabarito
+do SoccerNet, separadas pelo time do gabarito (Figura~\ref{fig:heat_gt}). A
+correlação entre o nosso mapa e o do gabarito é de 0,981 para o time amarelo e de
+0,969 para o time verde e branco. A massa total, isto é, o número médio de jogadores
+em campo, é de 4,33 contra 4,60 no time amarelo (jogadores não detectados) e de 7,76
+contra 7,63 no verde e branco, que recebe também o árbitro.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\linewidth]{07_heatmap_vs_gt.png}
+    \caption{Mapa gerado a partir do gabarito (esquerda) e pelo pipeline (direita),
+             time amarelo (acima) e verde e branco (abaixo), na mesma escala.}
+    \label{fig:heat_gt}
+\end{figure}
+
+\paragraph{Suavização espacial e na frequência.} A Tabela~\ref{tab:suav} compara as três
+implementações sobre a grade de $136\times210$ células. A convolução manual e a do
+OpenCV coincidem até a precisão da máquina. A versão na frequência difere em no
+máximo 0,3\% do valor máximo do mapa; essa diferença vem do truncamento do kernel
+espacial em $3\sigma$, já que o filtro na frequência corresponde a uma gaussiana sem
+truncamento (Figura~\ref{fig:suav}). Isso confirma o teorema da convolução na
+prática. Em tempo, a convolução manual é a mais lenta, por fazer um passo de NumPy
+para cada um dos $25\times25$ elementos do kernel; a DFT é mais rápida do que ela, e
+o OpenCV, que explora a separabilidade da gaussiana em código otimizado, é o mais
+rápido.
+
+\begin{table}[H]
+\centering
+\caption{Suavização gaussiana ($\sigma = 4$ células) da grade $136\times210$: diferença
+         para a convolução manual e tempo médio de 20 execuções.}
+\label{tab:suav}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Implementação} & \textbf{Diferença máx.\ relativa} & \textbf{Tempo (ms)} \\
+\midrule
+Convolução manual & --- & 8,7 \\
+\texttt{cv2.GaussianBlur} & $9 \times 10^{-16}$ & 0,13 \\
+DFT + passa-baixa gaussiano & $3{,}2 \times 10^{-3}$ & 0,76 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{07_espacial_vs_frequencia.png}
+    \caption{Suavização espacial (manual), na frequência e a diferença entre as duas,
+             ampliada cerca de 300 vezes para ficar visível. O padrão em blocos
+             corresponde às bordas do kernel truncado em $3\sigma$.}
+    \label{fig:suav}
+\end{figure}
+
+\paragraph{Resolução da grade.} A Figura~\ref{fig:resolucao} mostra a mesma
+acumulação em células de 0,25, 0,5, 1 e 2~m, sem suavização (acima) e com
+$\sigma = 2$~m fixo em metros (abaixo). Sem suavização, a grade fina mostra os rastros
+individuais dos jogadores, mas fica esparsa; a grade de 2~m agrupa as posições em
+blocos e perde a forma da linha de jogadores. Depois da suavização, as quatro
+resoluções ficam quase iguais, porque o kernel de 2~m é maior do que a célula em todos
+os casos: o que define o nível de detalhe do mapa final é $\sigma$, e não a célula.
+A grade de 0,5~m foi mantida por ter a mesma ordem de grandeza do erro da homografia
+(0,58~m).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{07_resolucao.png}
+    \caption{Efeito da resolução da grade (0,25 / 0,5 / 1 / 2~m), sem suavização
+             (acima) e com suavização gaussiana de $\sigma = 2$~m (abaixo).}
+    \label{fig:resolucao}
+\end{figure}
+
+\paragraph{Ponto do pé e centro da caixa.} Projetar o centro da caixa em vez do pé
+leva o erro mediano da posição no campo, em relação ao gabarito, de 0,61~m para
+3,67~m (percentil 90: de 0,86 para 4,96~m), sobre 7.251 detecções. A homografia
+só é válida para pontos no plano do gramado; o centro da caixa está a cerca de 1~m
+de altura, e sua projeção é empurrada para longe da câmera.
+
+\paragraph{Mapas por jogador.} A Figura~\ref{fig:jogadores} mostra os mapas dos 16
+identificadores com pelo menos 5~s de posições. Num pênalti os jogadores quase não
+se movem, e a maior parte dos mapas é uma única mancha. O identificador 12, um dos
+que misturam dois jogadores (Seção~\ref{sec:res_times}), aparece com duas manchas.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{07_heatmap_jogadores.jpg}
+    \caption{Mapas de calor por identificador do rastreador (IDs com pelo menos 5~s).}
+    \label{fig:jogadores}
+\end{figure}
 
 % ── 3.7 ──────────────────────────────────────────────────────────────────────
 \subsection{Desempenho}
 
 A Tabela~\ref{tab:tempo} mostra o tempo por quadro de cada etapa em CPU. A detecção
-domina o custo (83\%); as etapas clássicas somam cerca de 26~ms por quadro.
+domina o custo (82\%); as etapas clássicas somam cerca de 26~ms por quadro.
 
 \begin{table}[H]
 \centering
@@ -608,13 +734,16 @@ Detecção (YOLO11n, 1280~px) & 121 \\
 Máscara do gramado & 15 \\
 Filtro das detecções & 8 \\
 Decodificação e rastreamento & 3 \\
+Descritor de cor dos times & 0,3 \\
+Projeção e acumulação & $<$0,1 \\
 \midrule
-\textbf{Total} & \textbf{$\approx$146} ($\approx$6,8 quadros/s) \\
+\textbf{Total} & \textbf{$\approx$147} ($\approx$6,8 quadros/s) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\pendente{tempo da classificação de times e do mapa de calor.}
+Além do custo por quadro, o k-means e a classificação levam 0,12~s para o clipe
+inteiro, a votação 0,04~s, e a suavização dos dois mapas 0,02~s.
 
 % ════════════════════════════════════════════════════════════════════════════
 \section{DISCUSSÃO}
@@ -648,8 +777,10 @@ qualquer um dos descritores. Aumentar $k$ para 3 ou 4 não o isolou: o k-means
 preferiu dividir um time entre sol e sombra. A distância ao centróide também não o
 distingue, porque preto e branco são ambos cores de baixa saturação, próximas no
 plano H--S e no plano $a^*b^*$. O árbitro corresponde a cerca de 7\% das detecções do
-grupo. \pendente{decisão sobre o árbitro: aceitar como limitação ou testar um
-descritor com informação de brilho.}
+grupo, e o seu efeito aparece na massa do mapa do time verde e branco
+(Seção~3.6). Nesta versão, isso foi aceito como limitação; um descritor que use parte
+da informação de brilho (por exemplo, a fração de pixels escuros) poderia separá-lo,
+mas com o risco de reintroduzir o problema de sol e sombra.
 
 \subsection{Movimento da Câmera}
 
@@ -670,15 +801,25 @@ Tabela~\ref{tab:imgsz} mostra ainda que 960~px oferece quase o mesmo recall que
 \section{CONCLUSÕES}
 % ════════════════════════════════════════════════════════════════════════════
 
-\pendente{conclusão final, após os mapas de calor.}
+O pipeline desenvolvido gera mapas de calor por time e por jogador a partir de um
+vídeo de transmissão, usando uma rede neural apenas para detectar pessoas e técnicas
+clássicas de PDI em todas as outras etapas. No \texttt{clip01}, o mapa por time tem
+correlação de 0,97 a 0,98 com o mapa gerado a partir do gabarito do SoccerNet, e
+cada etapa intermediária foi medida separadamente: segmentação do gramado, detecção,
+rastreamento, classificação de times e homografia.
 
-Até esta etapa, o pipeline detecta, rastreia e classifica os jogadores e mapeia a
-imagem para o campo, e cada etapa foi medida contra o gabarito do SoccerNet. As
-etapas clássicas de PDI se mostraram suficientes quando os seus parâmetros são
-escolhidos a partir de medições e não por inspeção visual. Dois exemplos são a
-faixa de matiz do gramado, que parecia correta num quadro mas falhava em outros, e
-o espaço de cor dos uniformes, em que a escolha ``robusta'' só funcionou depois de
-descartar a luminância.
+As etapas clássicas se mostraram suficientes quando os seus parâmetros são
+escolhidos a partir de medições, e não por inspeção visual. Dois exemplos são a faixa
+de matiz do gramado, que parecia correta num quadro mas falhava em outros, e o espaço
+de cor dos uniformes, em que a escolha ``robusta'' (Lab) só funcionou depois de
+descartar a luminância. Os experimentos de suavização confirmaram na prática o
+teorema da convolução, e a comparação entre o ponto do pé e o centro da caixa mostrou
+por que só pontos no plano do gramado podem ser projetados pela homografia.
+
+As principais limitações são a homografia fixa, que restringe o mapa ao trecho com
+a câmera parada (23 dos 30~s do \texttt{clip01}); o árbitro, que é atribuído a um dos
+times; e a detecção de jogadores distantes. \pendente{homografia v2 (propagação
+entre quadros) e resultados em clipes de jogo corrido.}
 
 % ════════════════════════════════════════════════════════════════════════════
 \begin{thebibliography}{9}
