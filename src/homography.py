@@ -174,3 +174,11 @@ def propagate(video: str, H0: np.ndarray, frame0: int, frame1: int, dets: list[n
         if key is None or n_inl[i] < hc["keyframe_inliers"]:
             key = (kp, des, H)
     return Hs, n_inl
+
+
+def anchor(M: np.ndarray, k: int, Hk: np.ndarray) -> np.ndarray:
+    """Ancora uma tomada propagada com H0 = I (M_t: imagem t → imagem do 1º quadro) numa homografia
+    marcada no quadro k (índice dentro da tomada): H_t = H_k · M_k⁻¹ · M_t. Assim a marcação pode ser
+    feita em qualquer quadro da tomada com uma única passada da propagação para a frente."""
+    H = np.asarray(Hk, float) @ np.linalg.inv(M[k]) @ M
+    return H / H[:, 2:3, 2:3]

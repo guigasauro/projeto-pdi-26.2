@@ -48,3 +48,13 @@ def test_inter_frame_recovers_known_warp():
     G, n = inter_frame(kp0, d0, kp1, d1, {"ratio": 0.75, "min_inliers": 30, "ransac_px": 3.0})
     pts = np.float32([[100, 100], [400, 80], [240, 300]]).reshape(-1, 1, 2)
     assert n >= 30 and np.allclose(cv2.perspectiveTransform(pts, G), cv2.perspectiveTransform(pts, G_true), atol=1.0)
+
+
+def test_anchor_any_frame():
+    from src.homography import anchor
+    rng = np.random.default_rng(1)
+    Hpitch = np.array([[0.05, 0.01, -3], [0.002, 0.08, -10], [0, 0.0004, 1]])      # imagem do 1º quadro → campo
+    M = np.stack([np.eye(3)] + [np.eye(3) + rng.normal(0, 1e-3, (3, 3)) * [[1, 1, 50], [1, 1, 50], [1e-3, 1e-3, 0]] for _ in range(4)])
+    H_true = Hpitch @ M                                     # imagem t → campo
+    H = anchor(M, 3, H_true[3])                             # marcado no quadro 3
+    assert np.allclose(H, H_true / H_true[:, 2:3, 2:3], atol=1e-8)
