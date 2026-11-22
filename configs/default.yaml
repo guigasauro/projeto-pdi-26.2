@@ -6,7 +6,7 @@ detection:
   classes: [0]             # COCO: 0 = person
   conf: 0.3
   min_area: 150            # px²
-  imgsz: 1280              # clip01, 50 frames vs. GT: recall 0.76 (640) → 0.83 (960) → 0.86 (1280); jogadores distantes são pequenos
+  imgsz: 1280              # clip01, 50 frames vs. GT (com filtro): recall 0.82 (640, 49 ms) → 0.93 (960, 53 ms) → 0.94 (1280, 129 ms; CPU)
   foot_margin: 10          # px de dilatação da máscara no teste do pé; clip01: recall 0.88 (0) → 0.94 (10), precisão 0.94 nos dois (sem filtro: 0.87)
 # clip01 vs. GT (15 jogadores): padrão (1 s, 0.3, 0.8) → 44 IDs, 43 trocas, pureza 0.979;
 # escolhido → 32 IDs, 32 trocas, pureza 0.979. match 0.95 dá 18 trocas mas pureza 0.923 (IDs que
