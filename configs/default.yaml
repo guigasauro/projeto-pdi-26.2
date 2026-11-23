@@ -90,6 +90,11 @@ shots:
 # por quadro processado. 58 min de câmera principal a 30 fps com step 3 → ~35 mil quadros ≈ 2,4 h.
 match:
   frame_step: 3            # 10 Hz: em 0,1 s um jogador anda < 1 m, bem abaixo do σ = 2 m do heatmap
+  # lado de cada time (último defensor): Barça × Real, 39 tomadas → 72-79% dos votos para o mesmo time em cada gol;
+  # 1º tempo: Real defende a esquerda (confere com o gol do Pedri, 28', no gol da esquerda); 2º tempo: Barça
+  gk_zone_m: 6.0           # ignora quem está a menos disso da linha de fundo (goleiro)
+  deep_zone_m: 30.0        # só conta quadros com alguém a menos disso do gol (jogo naquele lado)
+  min_players: 6           # quadros com menos jogadores visíveis não votam
 # Refinamento da homografia pelas linhas brancas (src/lines.py)
 lines:
   tophat_px: 15            # elemento do top-hat > largura da linha (~5-10 px em 576p) e < jogador

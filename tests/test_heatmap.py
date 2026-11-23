@@ -29,3 +29,12 @@ def test_rotate_half_is_180_degrees():
     pos = np.array([[0, 1, 0, 10.0, 5.0], [3, 2, 1, 52.5, 34.0]])
     out = rotate_half(pos, 105, 68)
     assert out[:, 3:].tolist() == [[95.0, 63.0], [52.5, 34.0]] and (out[:, :3] == pos[:, :3]).all()
+
+
+def test_last_defender_votes():
+    from src.match import last_defender_votes
+    cfg = {"gk_zone_m": 6.0, "deep_zone_m": 30.0, "min_players": 4}
+    # quadro 0: time 1 defende a esquerda (mais recuado fora da pequena área), goleiro do time 0 ignorado
+    pos = np.array([[0, 1, 0, 3.0, 34], [0, 2, 1, 12.0, 30], [0, 3, 0, 20.0, 40], [0, 4, 1, 25.0, 20]])
+    v = last_defender_votes(pos, cfg, 105.0)
+    assert v.tolist() == [[0, 1], [0, 0]]
