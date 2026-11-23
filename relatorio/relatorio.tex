@@ -158,6 +158,14 @@ pessoas em campo (dois times, um goleiro e um árbitro). Para verificar se os
 parâmetros generalizam, três sequências de jogo corrido do mesmo conjunto
 (SNGS-054, SNGS-040 e SNGS-026) foram usadas apenas como validação.
 
+Para a partida completa foi usada a transmissão de TV da final da Copa del Rey de
+2025 (Barcelona $\times$ Real Madrid), em dois vídeos, um por tempo, com
+$1024\times576$ pixels a 30 quadros por segundo. A prorrogação não está nos vídeos.
+Cada vídeo inclui trechos que não são jogo (pré-jogo, intervalo); o início e o fim
+de cada tempo foram localizados pelo relógio da transmissão (105,6~min de jogo no
+total). Essa partida não tem gabarito de posições: a avaliação é feita por etapa
+(Seção~\ref{sec:res_partida}).
+
 % ── 2.2 ──────────────────────────────────────────────────────────────────────
 \subsection{Visão Geral do Pipeline}
 
@@ -172,6 +180,12 @@ O pipeline recebe o vídeo e executa as seguintes etapas:
   \item \textbf{Mapa de calor}: projeção dos pés no campo, acumulação numa grade,
         suavização e pseudocoloração.
 \end{enumerate}
+
+Para uma partida completa, duas etapas são acrescentadas
+(Seção~\ref{sec:partida}): a \textbf{separação da transmissão em tomadas}, das quais só
+as da câmera principal ao vivo são usadas, e o \textbf{acompanhamento da câmera} ao
+longo de cada tomada, com um modelo de câmera de posição fixa ajustado às linhas do
+campo em cada quadro.
 
 Todos os parâmetros ficam num único arquivo de configuração
 (\texttt{configs/default.yaml}), cada um acompanhado da medição que justifica o seu
@@ -190,7 +204,10 @@ Conversão BGR$\rightarrow$HSV/Lab, cor do uniforme & Sistemas de cores \\
 Limiarização da máscara do gramado & Operações pontuais \\
 Abertura e fechamento da máscara & Morfologia matemática \\
 Histograma H--S do uniforme, escolha dos limiares & Processamento de histograma \\
-Homografia, escala do campo & Operações geométricas \\
+Homografia, escala do campo, câmera PTZ & Operações geométricas \\
+Cortes de câmera por distância entre histogramas & Processamento de histograma \\
+Placar na tela por correlação normalizada & Correlação (casamento de padrões) \\
+Linhas do campo por \textit{top-hat}, transformada de distância & Morfologia matemática \\
 Kernel gaussiano no mapa de calor & Correlação e convolução \\
 Suavização do mapa no domínio da frequência & DFT, filtragem na frequência \\
 Grade discreta do campo & Amostragem e quantização \\
@@ -301,9 +318,22 @@ sinal oposto ao de um ponto visível) são descartados do desenho.
 
 Uma homografia fixa só vale enquanto a câmera está parada. No \texttt{clip01} a
 câmera passa a acompanhar o lance a partir do quadro 576 (Seção~\ref{sec:res_h}).
-Por isso, nesta versão, o mapa de calor usa apenas os quadros 0--575. A propagação
-da homografia entre quadros, que permitiria usar o clipe inteiro, é trabalho em
-andamento.
+
+\paragraph{Propagação entre quadros.} Para seguir o movimento da câmera, a homografia
+é propagada a partir do quadro marcado. Em cada quadro são detectados pontos
+SIFT \cite{lowe2004} apenas no gramado e fora das caixas dos jogadores (que se
+movem; só o campo é rígido), com a máscara do gramado erodida em 15~px para excluir
+as placas, que não estão no plano. Os descritores são casados com os de um
+\textbf{quadro-chave} (teste da razão de Lowe, 0,75), e uma homografia
+$\mathbf{G}_{t\to k}$ entre os dois quadros é estimada com RANSAC (3~px). Então
+$\mathbf{H}_t = \mathbf{H}_k\,\mathbf{G}_{t\to k}$. O quadro-chave só é trocado quando
+os pontos em comum caem abaixo de 150, porque cada troca compõe mais uma estimativa
+e acumula erro; casar sempre com o quadro anterior derivava muito mais. Dois
+detalhes foram decisivos. O ORB perdia o rumo no borrão do giro da câmera, e foi
+trocado pelo SIFT. E o SIFT do OpenCV escolhe os $N$ melhores pontos da imagem
+inteira \emph{antes} de aplicar a máscara, de modo que a torcida ficava com todas as
+vagas e sobravam 11 pontos no gramado; a solução foi detectar sem limite e manter
+os $N$ de maior resposta dentro da máscara.
 
 % ── 2.7 ──────────────────────────────────────────────────────────────────────
 \subsection{Classificação de Times}
@@ -342,8 +372,8 @@ através de uma troca de identificador (Seção~\ref{sec:res_times}).
 % ── 2.8 ──────────────────────────────────────────────────────────────────────
 \subsection{Mapa de Calor}
 
-Para cada quadro válido ($t \le 575$), o ponto do pé de cada jogador é projetado
-no campo com $\mathbf{H}$, e as posições fora do campo são descartadas. O campo é
+Para cada quadro com homografia válida, o ponto do pé de cada jogador é projetado
+no campo com a homografia daquele quadro, e as posições fora do campo são descartadas. O campo é
 \textbf{amostrado} numa grade de células de $0{,}5$~m ($136\times210$ células), e cada
 posição é \textbf{quantizada} na célula que a contém. A contagem de cada célula é
 dividida pelo número de quadros, de modo que o valor final representa o número médio
@@ -380,6 +410,91 @@ restante ficava quase transparente. O mapa de diferença entre os times usa um
 colormap divergente (vermelho para o time 0, azul para o time 1).
 
 % ── 2.9 ──────────────────────────────────────────────────────────────────────
+\subsection{Partida Completa}
+\label{sec:partida}
+
+\paragraph{Tomadas.} Uma transmissão alterna a câmera principal com close-ups,
+replays, torcida e gráficos. A cada quadro (reduzido a $256\times144$) calcula-se
+um histograma HSV 3D ($16\times4\times4$) e a distância de Bhattacharyya ao quadro
+anterior: um salto acima de 0,3 é um corte de câmera (o percentil 99 da distância
+dentro de uma mesma tomada é 0,19). Os replays entram e saem por fusões graduais,
+que não dão salto no histograma; mas o placar some durante o replay. Por isso a
+presença do placar também é medida em todo quadro, por casamento de padrões
+(máximo da correlação normalizada com um recorte do placar, numa região fixa), e
+cada troca de presença, depois de um filtro de mediana de 0,5~s, também conta como
+corte. Uma tomada é considerada da câmera principal ao vivo quando tem gramado em
+pelo menos metade do quadro, placar em pelo menos metade dos quadros e, no quadro
+central (YOLO), pelo menos 6 pessoas no gramado com altura mediana de no máximo
+20,8\% da altura da imagem (close-ups mostram poucas pessoas grandes).
+
+\paragraph{Marcação.} A ferramenta de marcação apresenta as tomadas da câmera
+principal da mais longa para a mais curta, e cada uma é marcada uma única vez, em
+qualquer quadro em que linhas sejam visíveis. A propagação SIFT da tomada é
+calculada sem depender da marcação (com $\mathbf{H}_0 = \mathbf{I}$, dando
+$\mathbf{M}_t$: imagem $t \rightarrow$ imagem do primeiro quadro), e a marcação no
+quadro $k$ é aplicada depois: $\mathbf{H}_t = \mathbf{H}_k\,\mathbf{M}_k^{-1}\mathbf{M}_t$.
+Assim, refazer uma marcação não exige reprocessar o vídeo.
+
+\paragraph{Câmera de posição fixa (PTZ).} Em 576p, com menos textura no gramado, a
+propagação passa a trocar de quadro-chave quase a cada quadro e acumula dezenas de
+pixels de erro numa tomada de 45~s (Seção~\ref{sec:res_partida}). Uma homografia
+geral tem 8 graus de liberdade, mas a câmera principal fica num ponto fixo do
+estádio e só gira (\textit{pan}, \textit{tilt}, \textit{roll}) e muda o zoom. Para um
+ponto do gramado $(X, Y, 0)$:
+\begin{equation}
+\mathbf{x} \sim \mathbf{K}\,\mathbf{R}\,[\,\mathbf{e}_1 \;\; \mathbf{e}_2 \;\; -\mathbf{C}\,]
+\begin{bmatrix} X \\ Y \\ 1 \end{bmatrix}, \qquad
+\mathbf{K} = \begin{bmatrix} f & 0 & w/2 \\ 0 & f & h/2 \\ 0 & 0 & 1 \end{bmatrix},
+\end{equation}
+em que $\mathbf{C}$ é o centro da câmera, $\mathbf{R}$ a rotação e $f$ a distância
+focal em pixels (pixels quadrados e centro óptico no centro da imagem). Com
+$\mathbf{C}$ conhecido, cada quadro tem apenas 4 parâmetros: o vetor de rotação de
+Rodrigues e $\log f$. Para estimar $\mathbf{C}$, cada homografia marcada é
+decomposta \cite{hartley2004}: as duas primeiras colunas de
+$\mathbf{K}^{-1}\mathbf{H}^{-1}$ são proporcionais a $\mathbf{r}_1$ e $\mathbf{r}_2$, que
+devem ser ortogonais e de mesma norma; $f$ é o valor que melhor satisfaz essas duas
+restrições, e daí saem $\mathbf{R}$ e $\mathbf{C} = -\mathbf{R}^\top\mathbf{t}$. O centro
+usado é a mediana dos centros das marcações bem condicionadas. Os parâmetros de um
+quadro marcado são então ajustados diretamente aos cliques, por mínimos quadrados
+do erro de reprojeção em pixels. Como são só 4 incógnitas, bastam 3 pontos, mesmo
+colineares, como os da linha do meio e do círculo central, que tornam a homografia
+geral degenerada.
+
+\paragraph{Alinhamento às linhas.} Em cada quadro processado, as linhas brancas são
+realçadas por um \textit{top-hat} morfológico na luminância $L^*$ (elemento circular
+de 15~px, maior que a largura da linha e menor que um jogador), que remove o
+gradiente de iluminação do gramado; o resultado é limiarizado e restrito ao gramado
+erodido, fora das caixas dos jogadores (uniformes brancos também passam no
+\textit{top-hat}). A \textbf{transformada de distância} dessa máscara dá, em cada
+pixel, a distância até a linha mais próxima (Figura~\ref{fig:linhas}). As marcações
+do modelo do campo são amostradas a cada 0,5~m, projetadas pela câmera, e os 4
+parâmetros são ajustados para minimizar a distância lida nesses pontos (custo
+robusto \textit{soft-$\ell_1$}), com um termo que penaliza mudar a câmera sem
+evidência. O ajuste é feito do grosso ao fino: primeiro com a distância saturada em
+60~px, para que erros grandes ainda puxem o modelo, e depois em 30 e 10~px, para que
+só as linhas próximas contem. A qualidade do quadro é a fração dos pontos visíveis
+do modelo a até 2~px de uma linha; quadros com fração abaixo de 0,5, ou com menos de
+40 pontos do modelo visíveis, ficam fora do mapa.
+
+O acompanhamento parte do quadro marcado e segue para os dois lados. A propagação
+SIFT passa a ser usada só como previsão do movimento curto entre quadros
+processados, $\mathbf{H}_{t-1}\,\mathbf{M}_{t-1}^{-1}\mathbf{M}_t$, projetada no modelo
+PTZ, e o alinhamento às linhas remove a deriva. Se a propagação se perde (borrão, giro
+rápido), a câmera do quadro anterior serve de previsão.
+
+\paragraph{Times e lados.} Um único k-means é ajustado com os primeiros quadros de
+todas as tomadas, já que os uniformes não mudam entre os tempos. Para somar os dois
+tempos, cada time deve atacar sempre no mesmo sentido. Em vez de supor a troca de
+lado no intervalo, o lado de cada time é medido: em cada quadro com o jogo perto de
+um gol, o jogador de linha mais recuado (fora da pequena área, onde fica o goleiro)
+costuma ser da defesa, pela regra do impedimento. Se o time que defende a esquerda
+muda entre os tempos, as posições do 2º tempo giram $180^\circ$
+($X \rightarrow L - X$, $Y \rightarrow W - Y$).
+
+Na partida são processados 10 quadros por segundo (1 a cada 3): em 0,1~s um jogador
+anda menos de 1~m, bem abaixo do $\sigma = 2$~m do mapa.
+
+% ── 2.10 ─────────────────────────────────────────────────────────────────────
 \subsection{Protocolo de Avaliação e Ferramentas}
 
 Em cada quadro, as caixas previstas são associadas às do gabarito pelo algoritmo
@@ -520,7 +635,20 @@ ordem de uma célula do mapa de calor (0,5~m).
 
 Mantendo $\mathbf{H}$ fixa ao longo do clipe (Figura~\ref{fig:erro_h}), o erro fica
 estável até o quadro 575 e cresce a partir do quadro 576, quando a câmera passa a
-acompanhar o lance, chegando a 13,8~m no quadro 744.
+acompanhar o lance, chegando a 13,8~m no quadro 744. Com a propagação SIFT, o pior
+quadro do clipe tem erro mediano de 0,64~m, contra 13,8~m da homografia fixa
+(Figura~\ref{fig:erro_v2}). O que resta é o desvio da própria marcação: partindo da
+homografia calculada com os pés do gabarito, o pior quadro fica em 0,58~m e a
+mediana em 0,03~m. Em comparação, o ORB chegava a 2,8~m no giro da câmera. Com isso
+o mapa de calor passa a usar os 30~s inteiros do clipe (Seção~3.6).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{05_erro_homografia_clip01_v2.png}
+    \caption{Erro mediano dos pés do gabarito projetados no campo, com a homografia
+             fixa do quadro 0 e com a propagação SIFT a partir da mesma marcação.}
+    \label{fig:erro_v2}
+\end{figure}
 
 \begin{figure}[H]
     \centering
@@ -634,7 +762,9 @@ do SoccerNet, separadas pelo time do gabarito (Figura~\ref{fig:heat_gt}). A
 correlação entre o nosso mapa e o do gabarito é de 0,981 para o time amarelo e de
 0,969 para o time verde e branco. A massa total, isto é, o número médio de jogadores
 em campo, é de 4,33 contra 4,60 no time amarelo (jogadores não detectados) e de 7,76
-contra 7,63 no verde e branco, que recebe também o árbitro.
+contra 7,63 no verde e branco, que recebe também o árbitro. Com a propagação da
+homografia, usando os 750 quadros, as correlações ficam em 0,983 e 0,975, e as massas
+em 3,98 contra 4,25 e 8,00 contra 7,87.
 
 \begin{figure}[H]
     \centering
@@ -717,6 +847,117 @@ que misturam dois jogadores (Seção~\ref{sec:res_times}), aparece com duas manc
 \end{figure}
 
 % ── 3.7 ──────────────────────────────────────────────────────────────────────
+\subsection{Partida Completa}
+\label{sec:res_partida}
+
+\paragraph{Tomadas.} Os 105,6~min de jogo da final foram separados em tomadas, das
+quais 149 são da câmera principal ao vivo, somando 58,1~min (55\%;
+Figura~\ref{fig:tomadas}). Antes de os cortes por troca de placar serem incluídos,
+duas sequências de replays ligadas por fusões (135~s e 115~s) eram aceitas como
+câmera principal; depois, nenhuma. As tomadas da câmera principal têm mediana de
+15~s e máximo de 113~s; as 29 mais longas cobrem metade do tempo.
+\pendente{precisão e revocação do filtro contra o gabarito de câmeras do SoccerNet
+(Liverpool $\times$ Manchester City).}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{08_tomadas_barcelona-x-real_madrid.png}
+    \caption{Tomadas dos dois tempos da final: câmera principal ao vivo (verde) e
+             demais (cinza), com marcas a cada 5~min.}
+    \label{fig:tomadas}
+\end{figure}
+
+\paragraph{Marcação e centro da câmera.} Foram marcadas 39 tomadas, 51\% do tempo da
+câmera principal. As 34 marcações feitas com a homografia geral e bem condicionadas
+apontam para o mesmo centro de câmera, $\mathbf{C} = (52{,}5;\ 106{,}1;\ 17{,}9)$~m:
+na altura do meio-campo, 38~m atrás da linha lateral e a 18~m de altura, com desvio
+absoluto mediano de 1,8, 1,5 e 0,3~m nos três eixos, do tamanho do ruído dos cliques.
+A distância focal varia de 1.273 a 3.103~px entre as marcações (zoom de
+$2{,}4\times$). Ajustando a câmera PTZ aos 328 cliques, o erro de reprojeção tem
+mediana de 2,1~px e percentil 90 de 4,6~px (0,24 e 0,52~m no campo). O erro não
+cresce do centro para as bordas da imagem: a componente radial média é de
+$+0{,}5$, $+0{,}4$ e $-0{,}5$~px para cliques a menos de 200, entre 200 e 350 e a mais de
+350~px do centro, o que indica que a distorção da lente é desprezível e que o modelo
+de pinhole com centro fixo é adequado. Uma marcação feita só com pontos da linha
+do meio, para a qual a homografia geral não desenha nem o círculo central, é
+ajustada pela câmera PTZ com 0,7~px de erro.
+
+\paragraph{Acompanhamento da câmera.} A Figura~\ref{fig:ptz} compara a propagação
+SIFT pura com a câmera PTZ alinhada às linhas numa tomada de 47~s que vai do
+meio-campo à grande área e volta. Com a propagação, as linhas projetadas já estão
+deslocadas em 28~s e, ao fim, caem fora do lugar; com o alinhamento às linhas, ficam
+sobre as linhas reais em toda a tomada. Nos 17.711 quadros processados das 39
+tomadas, a fração mediana dos pontos do modelo sobre as linhas é de 0,97 (percentil
+10: 0,87); 6,5\% dos quadros mostram poucas linhas para o ajuste e 1,7\% ficam abaixo
+de 0,5. Restam 92\% dos quadros, 27,1~min de jogo. Num teste sintético, partindo de
+8 a 33~px de erro, o ajuste volta a menos de 4~px da câmera verdadeira.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{09_linhas.jpg}
+    \caption{Linhas do campo: quadro original, \textit{top-hat} da luminância, máscara
+             das linhas (sem os jogadores) e transformada de distância (escuro =
+             perto de uma linha).}
+    \label{fig:linhas}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{09_propagacao_vs_ptz.jpg}
+    \caption{Modelo do campo projetado em três momentos de uma tomada de 47~s:
+             propagação SIFT pura (acima) e câmera PTZ alinhada às linhas (abaixo).}
+    \label{fig:ptz}
+\end{figure}
+
+\paragraph{Lados dos times.} No 1º tempo, o último defensor junto ao gol da
+esquerda é do Real em 72\% dos quadros, e junto ao da direita, do Barcelona em 73\%;
+no 2º tempo, a relação se inverte (Barcelona à esquerda em 76\%, Real à direita em
+78\%). Isso confirma a troca de lado no intervalo, e o 2º tempo é girado. A direção
+confere com o gol do Barcelona aos 28~min, marcado no gol da esquerda.
+
+\paragraph{Mapas da partida.} A Figura~\ref{fig:heat_partida} mostra os mapas por
+time na orientação do 1º tempo, em que o Real defende o gol da esquerda. O Barcelona
+ocupa a faixa entre o meio-campo e a entrada da área do Real; o Real fica compacto à
+frente da própria área. A mancha dentro da pequena área da esquerda, no mapa do
+grupo escuro, é o goleiro do Real, cujo uniforme amarelo cai no grupo do Barcelona
+(Seção~4.3).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{09_heatmap_partida.jpg}
+    \caption{Mapas da final (39 tomadas, 27,1~min de jogo), orientação do 1º tempo:
+             grupo escuro (Barcelona, com os goleiros e os árbitros), grupo branco (Real)
+             e diferença (vermelho = mais Barcelona, azul = mais Real).}
+    \label{fig:heat_partida}
+\end{figure}
+
+\paragraph{Quantas tomadas bastam.} A Tabela~\ref{tab:conv} compara o mapa feito com
+uma fração sorteada das tomadas com o mapa de todas (30 sorteios). Duas metades
+disjuntas têm correlação média de 0,856; pela fórmula de Spearman--Brown, a
+confiabilidade do mapa com as 39 tomadas é de 0,92, e dobrar o número de tomadas a
+levaria a 0,96.
+
+\begin{table}[H]
+\centering
+\caption{Correlação média (mínima) entre o mapa feito com parte das tomadas e o mapa
+         com as 39, média dos dois times.}
+\label{tab:conv}
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{Tomadas usadas} & \textbf{Correlação} \\
+\midrule
+25\% & 0,875 (0,461) \\
+50\% & 0,962 (0,924) \\
+75\% & 0,985 (0,961) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Custo.} Em 576p, por quadro processado: 110~ms de detecção (YOLO, 1280~px),
+130~ms de SIFT e cerca de 35~ms de alinhamento às linhas, em CPU. A partida inteira
+a 10 quadros por segundo levaria cerca de 2,4~h.
+
+% ── 3.8 ──────────────────────────────────────────────────────────────────────
 \subsection{Desempenho}
 
 A Tabela~\ref{tab:tempo} mostra o tempo por quadro de cada etapa em CPU. A detecção
@@ -780,14 +1021,34 @@ plano H--S e no plano $a^*b^*$. O árbitro corresponde a cerca de 7\% das detec�
 grupo, e o seu efeito aparece na massa do mapa do time verde e branco
 (Seção~3.6). Nesta versão, isso foi aceito como limitação; um descritor que use parte
 da informação de brilho (por exemplo, a fração de pixels escuros) poderia separá-lo,
-mas com o risco de reintroduzir o problema de sol e sombra.
+mas com o risco de reintroduzir o problema de sol e sombra. Na final, o mesmo
+acontece com o goleiro do Real, de amarelo, que cai no grupo escuro do Barcelona
+junto com os árbitros.
 
 \subsection{Movimento da Câmera}
 
 A homografia manual é precisa enquanto a câmera está parada, mas qualquer movimento
 a invalida rapidamente: em menos de 7~s de acompanhamento do lance, o erro chega a
-quase 14~m. O mapa de calor desta versão cobre, portanto, 23 dos 30~s do
-\texttt{clip01}. \pendente{propagação da homografia entre quadros.}
+quase 14~m. A propagação por pontos SIFT resolve isso num clipe de 30~s em alta
+resolução, mas não numa partida: em 576p e em tomadas de quase 2 minutos, a soma
+das pequenas estimativas entre quadros deriva. A solução foi trocar a pergunta
+``como a imagem se moveu?'' por ``que câmera explica as linhas que vejo?''. Dois
+conhecimentos sobre o problema tornaram isso robusto: o campo tem marcações
+conhecidas, que servem de referência absoluta em todo quadro; e a câmera da
+transmissão não se desloca, o que reduz cada quadro a 4 parâmetros e impede que o
+ajuste ``entorte'' o campo quando só uma linha aparece. A mesma restrição tornou a
+marcação mais simples, já que 3 pontos colineares passam a bastar.
+
+\subsection{O Que o Mapa da Partida Mede}
+
+A câmera principal segue a bola. No 1º tempo da final, 71\% dos quadros mostram a
+metade em que o Barcelona atacava; jogadores longe da bola raramente aparecem. O
+mapa da partida mostra, portanto, onde os jogadores estavam \emph{enquanto
+apareciam na transmissão}, e não o tempo total de cada um em cada zona: a metade
+defensiva do Barcelona quase não aparece no seu mapa porque o jogo pouco esteve lá,
+e não porque os zagueiros nunca a ocupassem. A ordem de marcação (das tomadas mais
+longas para as mais curtas) não explica o viés: a correlação entre a duração da
+tomada e a posição média da câmera não é significativa ($\rho = -0{,}19$, $p = 0{,}27$).
 
 \subsection{Limites da Detecção}
 
@@ -816,10 +1077,18 @@ descartar a luminância. Os experimentos de suavização confirmaram na prática
 teorema da convolução, e a comparação entre o ponto do pé e o centro da caixa mostrou
 por que só pontos no plano do gramado podem ser projetados pela homografia.
 
-As principais limitações são a homografia fixa, que restringe o mapa ao trecho com
-a câmera parada (23 dos 30~s do \texttt{clip01}); o árbitro, que é atribuído a um dos
-times; e a detecção de jogadores distantes. \pendente{homografia v2 (propagação
-entre quadros) e resultados em clipes de jogo corrido.}
+O pipeline foi estendido a uma partida completa. A transmissão é separada em
+tomadas por comparação de histogramas e casamento de padrões do placar, e a câmera
+de cada quadro é obtida alinhando o modelo do campo às linhas brancas (\textit{top-hat}
+e transformada de distância), com um modelo de câmera de posição fixa estimado das
+próprias marcações. Na final da Copa del Rey, com 39 tomadas marcadas, 92\% dos
+quadros ficam com a câmera alinhada às linhas, e o mapa por time tem confiabilidade
+estimada de 0,92.
+
+As principais limitações são o árbitro e o goleiro de cor parecida com a de um time,
+que são atribuídos a ele; a detecção de jogadores distantes; a marcação manual de
+uma referência por tomada; e o fato de a câmera seguir a bola, de modo que o mapa da
+partida descreve o jogo mostrado pela transmissão.
 
 % ════════════════════════════════════════════════════════════════════════════
 \begin{thebibliography}{9}
@@ -854,6 +1123,11 @@ Y.~Zhang et al.
 V.~Somers et al.
 \newblock SoccerNet Game State Reconstruction: end-to-end athlete tracking and identification on a minimap.
 \newblock In \emph{CVPR Workshops}, 2024.
+
+\bibitem{lowe2004}
+D.~G. Lowe.
+\newblock Distinctive image features from scale-invariant keypoints.
+\newblock \emph{International Journal of Computer Vision}, 60(2):91--110, 2004.
 
 \bibitem{yolo11}
 G.~Jocher e J.~Qiu.
