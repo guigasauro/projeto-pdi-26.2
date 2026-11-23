@@ -22,3 +22,10 @@ def test_manual_convolution_matches_opencv_and_frequency():
     assert np.allclose(ref, smooth_opencv(g, 3.0), atol=1e-12)
     assert np.abs(ref - smooth_frequency(g, 3.0)).max() < 0.01 * ref.max()   # truncamento do kernel em 3σ
     assert np.isclose(ref.sum(), g.sum(), rtol=1e-3)                        # suavizar conserva a massa
+
+
+def test_rotate_half_is_180_degrees():
+    from src.match import rotate_half
+    pos = np.array([[0, 1, 0, 10.0, 5.0], [3, 2, 1, 52.5, 34.0]])
+    out = rotate_half(pos, 105, 68)
+    assert out[:, 3:].tolist() == [[95.0, 63.0], [52.5, 34.0]] and (out[:, :3] == pos[:, :3]).all()

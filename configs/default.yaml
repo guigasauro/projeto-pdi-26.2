@@ -85,3 +85,25 @@ shots:
   main_board_min: 0.5      # fração dos quadros com placar (sem placar = replay/gráfico)
   probe_min_frames: 15     # tomadas mais curtas não passam pelo YOLO e contam como "outras"
   board_median_frames: 15  # mediana de 0,5 s na presença do placar (piscadas do gráfico não viram corte)
+# Partida completa (src/match.py), só as tomadas da câmera principal com homografia marcada.
+# 576p em CPU: YOLO 110 ms (imgsz 1280; 960/1024 ~77 ms mas perdem pessoas pequenas em 1 de 5 quadros) + SIFT 130 ms
+# por quadro processado. 58 min de câmera principal a 30 fps com step 3 → ~35 mil quadros ≈ 2,4 h.
+match:
+  frame_step: 3            # 10 Hz: em 0,1 s um jogador anda < 1 m, bem abaixo do σ = 2 m do heatmap
+# Refinamento da homografia pelas linhas brancas (src/lines.py)
+lines:
+  tophat_px: 15            # elemento do top-hat > largura da linha (~5-10 px em 576p) e < jogador
+  tophat_thresh: 25        # L do Lab; no gramado mediana 1-2, p90 4-7; linhas 70-95
+  mask_erode: 15           # px: tira a borda do gramado (placas e torcida)
+  player_margin: 5
+  max_px: 60               # saturação da transformada de distância guardada (uint8)
+  stages: [[60, 10.0], [30, 5.0], [10, 2.0]]   # (saturação px, escala do custo robusto px), grosso → fino; 1:85356 +465: só [10, 2] → 0.40, grosso+fino → 0.76
+  inlier_px: 2.0           # ponto do modelo "sobre a linha" (fração = qualidade do quadro)
+  sample_m: 0.5            # espaçamento dos pontos do modelo
+  min_visible: 40          # menos pontos do modelo visíveis = não refina
+  prior_weight: 0.05       # peso do deslocamento dos cantos (px) contra o resíduo das linhas
+  max_iter: 50
+  center_max_resid: 0.01   # marcação entra na estimativa do centro da câmera se r1⟂r2, |r1|=|r2| quase valem (2:55061, quase colinear: 1.6)
+  anchor_max_px: 10        # erro mediano dos cliques na câmera PTZ; 27 marcações: 0.6-4.7 px; acima disso a marcação está errada
+  min_score: 0.5           # fração mínima dos pontos do modelo sobre as linhas para o quadro entrar no heatmap
+  center_min_marks: 5      # marcações com homografia geral antes de a ferramenta passar ao modelo de câmera fixa

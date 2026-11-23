@@ -9,6 +9,8 @@ Janela "frame": clique num ponto do campo na imagem (círculo amarelo).
 Janela "campo": clique no ponto correspondente do modelo (é ajustado ao ponto notável mais próximo).
 Repita para >= 4 pontos bem espalhados (não colineares). Com 4+, as linhas do modelo são projetadas
 sobre o frame em magenta: devem coincidir com as linhas reais.
+Modo partida: depois de algumas marcações, a posição da câmera da transmissão é estimada e a marcação
+usa o modelo de câmera fixa (src/camera.py, 4 parâmetros): bastam 3 pontos, mesmo colineares.
 Teclas:  u = desfaz o último par   s = salva   q/Esc = sai   h = mostra/esconde as linhas projetadas
          a / d = volta / avança 1 s (escolha um quadro com linhas visíveis; os pares são descartados)
          n = pula a tomada (só no modo partida; ex.: nenhuma marcação do campo visível)
@@ -24,16 +26,18 @@ import numpy as np
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src import homography, pitch  # noqa: E402
+from src import camera, homography, pitch  # noqa: E402
 
 SNAP_M = 3.0      # distância máxima (m) do clique no modelo até um ponto notável
 VIEW_W = 1280     # largura da janela do frame (a imagem é só reescalada para exibir)
 KEYS = {ord("s"): "save", ord("n"): "skip", ord("a"): "back", ord("d"): "fwd", ord("q"): "quit", 27: "quit"}
 
 
-def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool) -> tuple[str, np.ndarray | None, list, list]:
+def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool,
+             cam: tuple[np.ndarray, list[np.ndarray]] | None = None) -> tuple[str, np.ndarray | None, list, list]:
     """Janela de marcação de um quadro. Devolve (ação, H, pontos na imagem, nomes dos pontos do modelo);
-    ação ∈ save | skip | back | fwd | quit."""
+    ação ∈ save | skip | back | fwd | quit. Com `cam` = (centro da câmera, câmeras de outras marcações),
+    H vem do modelo de câmera fixa a partir de 3 pontos; sem, da homografia geral com 4+."""
     pc, hc = cfg["pitch"], cfg["homography"]
     scale = VIEW_W / img_bgr.shape[1]
     kp = pitch.keypoints(pc["length_m"], pc["width_m"])
@@ -47,7 +51,21 @@ def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool) -> t
 
     def update_h() -> None:
         H[0] = None
-        if len(pts_img) >= 4:
+        if cam is not None and len(pts_img) >= 3:
+            P, I = np.array([kp[n] for n in names]), np.array(pts_img)
+            h, w = img_bgr.shape[:2]
+            try:
+                H8 = homography.compute_homography(I, P, hc["ransac_thresh_m"])[0] if len(I) >= 4 else None
+            except ValueError:
+                H8 = None                                    # pontos colineares: só a câmera fixa resolve
+            p, _ = camera.anchor(I, P, H8, cam[0], w, h, cam[1])
+            if p is None:
+                print("câmera não ajustou: confira os pares")
+                return
+            H[0] = camera.to_homography(p, cam[0], w, h)
+            px = np.linalg.norm(camera.project(p, cam[0], w, h, P) - I, axis=1)
+            print("erro por ponto (px):", ", ".join(f"{n}={e:.1f}{' [ERRO?]' if e > 10 else ''}" for n, e in zip(names, px)))
+        elif cam is None and len(pts_img) >= 4:
             P = np.array([kp[n] for n in names])
             try:
                 H[0], inl = homography.compute_homography(np.array(pts_img), P, hc["ransac_thresh_m"])
@@ -103,7 +121,7 @@ def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool) -> t
         elif k == ord("h"):
             overlay = not overlay
         elif action == "save" and H[0] is None:
-            print("precisa de pelo menos 4 pares válidos para salvar")
+            print(f"precisa de pelo menos {3 if cam else 4} pares válidos para salvar")
         elif action == "skip" and not allow_skip:
             continue
         elif action:
@@ -144,6 +162,7 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
     name = Path(args.match).stem
     out = Path(f"data/annotations/{name}_homografias.json")
     done = json.loads(out.read_text()) if out.exists() else {}
+    cam = match_camera(done, M, cfg)
     todo = []
     for half, v in M["tempos"].items():
         for s in json.load(open(f"outputs/{name}/{half}/shots.json")):
@@ -158,10 +177,10 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
         fps = cv2.VideoCapture(video).get(cv2.CAP_PROP_FPS)
         f = a
         while True:
-            covered = sum(t[0] for t in todo if done.get(f"{t[1]}:{t[3]}", {}).get("H"))
+            covered = sum(t[0] for t in todo if "H_img_to_pitch" in done.get(f"{t[1]}:{t[3]}", {}))
             header = (f"{half}o tempo | tomada {i + 1}/{len(todo)} ({n / fps:.0f} s) | +{(f - a) / fps:.0f} s | "
                       f"marcado {covered / total:.0%} do tempo")
-            action, H, pts, names = annotate(read_frame(video, f), cfg, header, allow_skip=True)
+            action, H, pts, names = annotate(read_frame(video, f), cfg, header, allow_skip=True, cam=cam)
             if action in ("back", "fwd"):
                 f = int(np.clip(f + int(fps) * (1 if action == "fwd" else -1), a, b - 1))
                 continue
@@ -169,11 +188,29 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
         if action == "quit":
             break
         done[key] = ({"tempo": half, "frame_a": a, "frame_b": b, "frame": f, "H_img_to_pitch": H.tolist(),
+                      "modelo": "ptz" if cam else "homografia",
                       "points": [{"name": nm, "img": [float(x), float(y)]} for nm, (x, y) in zip(names, pts)]}
                      if action == "save" else {"tempo": half, "frame_a": a, "frame_b": b, "pulada": True})
         out.write_text(json.dumps(done, indent=1, ensure_ascii=False))
         print(f"tomada {key}: {'salva' if action == 'save' else 'pulada'} ({out})")
     cv2.destroyAllWindows()
+
+
+def match_camera(done: dict, M: dict, cfg: dict) -> tuple[np.ndarray, list[np.ndarray]] | None:
+    """Centro da câmera e câmeras candidatas a partir das marcações com homografia geral (as feitas
+    já com o modelo de câmera fixa não entram: repetiriam o próprio centro). None se ainda houver poucas."""
+    lc = cfg["lines"]
+    Hs = [np.array(s["H_img_to_pitch"]) for s in done.values()
+          if "H_img_to_pitch" in s and s.get("modelo", "homografia") == "homografia"]
+    cap = cv2.VideoCapture(M["tempos"]["1"]["video"])
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    good = [H for H in Hs if camera.decompose(H, w, h)[2] <= lc["center_max_resid"]]
+    if len(good) < lc["center_min_marks"]:
+        print(f"{len(good)} marcações boas: usando a homografia geral (4+ pontos) até ter {lc['center_min_marks']}")
+        return None
+    C = camera.estimate_center(good, w, h, lc["center_max_resid"])
+    print(f"câmera fixa em {np.round(C, 1)} m (de {len(good)} marcações): 3+ pontos bastam")
+    return C, [camera.fit(H, C, w, h) for H in good]
 
 
 def main() -> None:

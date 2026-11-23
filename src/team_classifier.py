@@ -48,19 +48,21 @@ def descriptor(crop_bgr: np.ndarray, cfg_team: dict, cfg_mask: dict | None) -> n
     return hist.ravel() / hist.sum()
 
 
-def extract(video_path: str, tracks: list[np.ndarray], cfg: dict) -> list[np.ndarray]:
-    """Descritores de todas as detecções rastreadas: lista por frame de (N, D), NaN onde não há descritor."""
+def extract(video_path: str, tracks: list[np.ndarray], cfg: dict, start: int = 0) -> list[np.ndarray]:
+    """Descritores de todas as detecções rastreadas: lista por frame de (N, D), NaN onde não há descritor.
+    `tracks[i]` é o quadro `start + i` do vídeo."""
     tc = cfg["team"]
     cfg_mask = cfg["field_mask"] if tc["remove_grass"] else None
     cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start)
     out, dim = [], None
-    for t in tqdm(tracks, desc="descritores de cor"):
+    for t in tqdm(tracks, desc="descritores de cor", leave=False):
         ok, img_bgr = cap.read()
         if not ok:
             raise RuntimeError(f"vídeo terminou antes dos tracks ({len(out)} frames)")
         ds = [descriptor(torso_crop(img_bgr, b, tc["torso"]), tc, cfg_mask) for b in t]
         dim = dim or next((len(d) for d in ds if d is not None), None)
-        out.append(np.array([d if d is not None else np.full(dim or 1, np.nan) for d in ds]).reshape(len(t), -1))
+        out.append(np.array([d if d is not None else np.full(dim or 1, np.nan) for d in ds]).reshape(len(t), dim or 1))
     cap.release()
     return [d if d.shape[1] == dim else np.full((len(d), dim), np.nan) for d in out]
 
@@ -80,7 +82,7 @@ def classify(km: KMeans, descs: list[np.ndarray]) -> list[np.ndarray]:
         lab = np.full(len(d), -1)
         ok = ~np.isnan(d).any(1)
         if ok.any():
-            lab[ok] = km.predict(d[ok])
+            lab[ok] = km.predict(d[ok].astype(km.cluster_centers_.dtype))   # descritores vêm em float32 ou float64
         out.append(lab)
     return out
 

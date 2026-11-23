@@ -61,8 +61,9 @@ def detect_frame(model, img_bgr: np.ndarray, cfg: dict, device: str) -> np.ndarr
     return np.hstack([b.xyxy.cpu().numpy(), b.conf.cpu().numpy()[:, None], b.cls.cpu().numpy()[:, None]])
 
 
-def detect_video(video_path: str, cfg: dict, cache_path: str | Path | None = None) -> list[np.ndarray]:
-    """Detecções filtradas para cada frame do vídeo (índice da lista = índice do frame;
+def detect_video(video_path: str, cfg: dict, cache_path: str | Path | None = None,
+                 start: int = 0, end: int | None = None) -> list[np.ndarray]:
+    """Detecções filtradas para cada frame de [start, end) do vídeo (índice da lista = frame − start;
     frames pulados por `frame_step` ficam vazios). Se `cache_path` existir, lê dele em vez de
     rodar o YOLO; senão roda e salva (.npz). `cfg` é o YAML inteiro."""
     cache_path = Path(cache_path) if cache_path else None
@@ -76,8 +77,9 @@ def detect_video(video_path: str, cfg: dict, cache_path: str | Path | None = Non
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise FileNotFoundError(video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start)
     out = []
-    for i in tqdm(range(int(cap.get(cv2.CAP_PROP_FRAME_COUNT))), desc="detecção"):
+    for i in tqdm(range((end or int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) - start), desc="detecção", leave=False):
         ok, img_bgr = cap.read()
         if not ok:
             break

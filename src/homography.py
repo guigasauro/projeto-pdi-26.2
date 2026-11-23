@@ -141,7 +141,8 @@ def propagate(video: str, H0: np.ndarray, frame0: int, frame1: int, dets: list[n
     sobreposição), o que reduz o número de composições e, com ele, a deriva acumulada.
     `dets[t]` são as detecções do quadro t (caixas excluídas da busca de pontos).
     Devolve (H por quadro (N, 3, 3), inliers por quadro); se a estimativa falhar, H fica NaN
-    daí em diante (precisa de reancoragem). `cfg` é o YAML inteiro."""
+    daí em diante (precisa de reancoragem). Só os quadros frame0 + múltiplos de `video.frame_step`
+    são estimados (os outros ficam NaN). `cfg` é o YAML inteiro."""
     from src.field_mask import field_mask
     hc = cfg["homography"]
     # SIFT do OpenCV escolhe os N melhores pontos da imagem inteira antes de aplicar a máscara (a torcida
@@ -153,7 +154,11 @@ def propagate(video: str, H0: np.ndarray, frame0: int, frame1: int, dets: list[n
     Hs = np.full((frame1 - frame0, 3, 3), np.nan)
     n_inl = np.zeros(frame1 - frame0, int)
     key = None                                   # (keypoints, descritores, H do quadro-chave)
+    step = cfg["video"]["frame_step"]
     for i, t in enumerate(range(frame0, frame1)):
+        if i % step:
+            cap.grab()
+            continue
         ok, img = cap.read()
         if not ok:
             break
@@ -182,3 +187,61 @@ def anchor(M: np.ndarray, k: int, Hk: np.ndarray) -> np.ndarray:
     feita em qualquer quadro da tomada com uma única passada da propagação para a frente."""
     H = np.asarray(Hk, float) @ np.linalg.inv(M[k]) @ M
     return H / H[:, 2:3, 2:3]
+
+
+def refine_lines(video: str, a: int, b: int, k: int, p_k: np.ndarray, C: np.ndarray, M: np.ndarray,
+                 dets: list[np.ndarray], cfg: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Câmera PTZ (`camera`) de cada quadro processado da tomada [a, b), a partir dos parâmetros `p_k`
+    do quadro marcado a + k, indo para os dois lados. A propagação (M, de `propagate` com H0 = I) só
+    prevê o movimento curto entre quadros processados (H_t ≈ H_prev · M_prev⁻¹ · M_t, projetada no
+    modelo PTZ) e o ajuste às linhas (`lines.refine`) remove a deriva. `dets[i]` = caixas do quadro a + i.
+    Devolve (H imagem→campo por quadro, fração dos pontos do modelo sobre as linhas; NaN sem estimativa)."""
+    from src import camera, lines
+    from src.field_mask import field_mask
+    lc, step = cfg["lines"], cfg["video"]["frame_step"]
+    samples = lines.model_samples(cfg["pitch"]["length_m"], cfg["pitch"]["width_m"], lc["sample_m"])
+    n = len(M)
+    ok = np.isfinite(M).all((1, 2))
+    Hs, score = np.full((n, 3, 3), np.nan), np.full(n, np.nan)
+    before: dict[int, tuple[np.ndarray, np.ndarray]] = {}    # quadros antes de k: ajustados depois, de trás para a frente
+    wh: list[int] = []
+    p_k_ref: list[np.ndarray] = []                           # parâmetros ajustados no quadro marcado
+
+    def do(i: int, data: tuple[np.ndarray, np.ndarray], prev: tuple[int, np.ndarray] | None) -> tuple[int, np.ndarray]:
+        w, h = wh
+        if prev is None:
+            p0 = p_k
+        elif ok[prev[0]] and ok[i]:
+            Hp = camera.to_homography(prev[1], C, w, h) @ np.linalg.inv(M[prev[0]]) @ M[i]
+            p0 = camera.fit(Hp / Hp[2, 2], C, w, h, init=prev[1])
+        else:
+            p0 = prev[1]                                     # propagação perdida: só as linhas seguem a câmera
+        p, score[i], _ = lines.refine(p0, C, *data, samples, lc)
+        Hs[i] = camera.to_homography(p, C, w, h)
+        if i == k:
+            p_k_ref.append(p)
+        return i, p
+
+    cap = cv2.VideoCapture(video)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, a)
+    prev = None
+    for i in range(n):
+        if i % step and i != k:
+            cap.grab()
+            continue
+        got, img = cap.read()
+        if not got:
+            break
+        wh[:] = img.shape[1], img.shape[0]
+        lm, region = lines.line_mask(img, field_mask(img, cfg["field_mask"]), dets[i], lc)
+        data = (lines.distance_map(lm, lc["max_px"]), region)
+        if i < k:
+            before[i] = data
+        else:
+            prev = do(i, data, prev)
+    prev = (k, p_k_ref[0]) if p_k_ref else None
+    for i in sorted(before, reverse=True):
+        if prev is None:
+            break
+        prev = do(i, before[i], prev)
+    return Hs, score
