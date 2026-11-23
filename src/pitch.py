@@ -18,7 +18,10 @@ def keypoints(length: float, width: float) -> dict[str, tuple[float, float]]:
     Lado `esq` = X pequeno, `dir` = X grande; `sup` = Y pequeno (lado oposto à câmera), `inf` = Y grande."""
     cy = width / 2
     kp = {"meio_sup": (length / 2, 0.0), "meio_inf": (length / 2, width), "centro": (length / 2, cy),
-          "circulo_sup": (length / 2, cy - CIRCLE_R), "circulo_inf": (length / 2, cy + CIRCLE_R)}
+          "circulo_sup": (length / 2, cy - CIRCLE_R), "circulo_inf": (length / 2, cy + CIRCLE_R),
+          # extremos do círculo fora da linha do meio (onde a tangente é paralela a ela): sem eles, uma cena
+          # do meio-campo só tem pontos colineares
+          "circulo_esq": (length / 2 - CIRCLE_R, cy), "circulo_dir": (length / 2 + CIRCLE_R, cy)}
     arc_dy = np.sqrt(CIRCLE_R ** 2 - (PENALTY_DEPTH - PENALTY_SPOT) ** 2)  # meia-lua cruza a linha da grande área
     for side, x0, s in (("esq", 0.0, 1), ("dir", length, -1)):
         kp |= {

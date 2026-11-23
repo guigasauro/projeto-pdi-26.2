@@ -9,7 +9,7 @@ Janela "frame": clique num ponto do campo na imagem (círculo amarelo).
 Janela "campo": clique no ponto correspondente do modelo (é ajustado ao ponto notável mais próximo).
 Repita para >= 4 pontos bem espalhados (não colineares). Com 4+, as linhas do modelo são projetadas
 sobre o frame em magenta: devem coincidir com as linhas reais.
-Teclas:  u = desfaz o último par   s = salva   q/Esc = sai
+Teclas:  u = desfaz o último par   s = salva   q/Esc = sai   h = mostra/esconde as linhas projetadas
          a / d = volta / avança 1 s (escolha um quadro com linhas visíveis; os pares são descartados)
          n = pula a tomada (só no modo partida; ex.: nenhuma marcação do campo visível)
 Saída: data/annotations/<clip>.json  ou  data/annotations/<partida>_homografias.json
@@ -43,6 +43,7 @@ def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool) -> t
     names: list[str] = []
     pending: list[tuple[float, float] | None] = [None]
     H: list[np.ndarray | None] = [None]
+    overlay = True
 
     def update_h() -> None:
         H[0] = None
@@ -76,10 +77,10 @@ def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool) -> t
 
     cv2.namedWindow("frame"); cv2.setMouseCallback("frame", on_frame)
     cv2.namedWindow("campo"); cv2.setMouseCallback("campo", on_pitch)
-    help_txt = "u=desfaz s=salva a/d=-/+1s " + ("n=pula " if allow_skip else "") + "q=sai"
+    help_txt = "u=desfaz s=salva h=linhas a/d=-/+1s " + ("n=pula " if allow_skip else "") + "q=sai"
     while True:
         P = np.array([kp[n] for n in names]) if names else None
-        view = homography.debug_view(img_bgr, H[0], lines, np.array(pts_img), P) if H[0] is not None else img_bgr.copy()
+        view = homography.debug_view(img_bgr, H[0], lines, np.array(pts_img), P) if H[0] is not None and overlay else img_bgr.copy()
         for (x, y), n in zip(pts_img, names):
             cv2.circle(view, (int(x), int(y)), 7, (0, 255, 0), 2)
             cv2.putText(view, n, (int(x) + 8, int(y) - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
@@ -99,6 +100,8 @@ def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool) -> t
         action = KEYS.get(k)
         if k == ord("u") and names:
             pts_img.pop(); print("desfeito:", names.pop()); update_h()
+        elif k == ord("h"):
+            overlay = not overlay
         elif action == "save" and H[0] is None:
             print("precisa de pelo menos 4 pares válidos para salvar")
         elif action == "skip" and not allow_skip:
