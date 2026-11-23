@@ -109,7 +109,7 @@ def probe(cap: cv2.VideoCapture, frame: int, model, cfg: dict, device: str) -> t
 
 
 def is_main(grass: float, board: float, people: int, height: float, cfg_shots: dict) -> bool:
-    """Regra da câmera principal ao vivo (limiares justificados no YAML)."""
+    """Regra da câmera principal ao vivo (limiares justificados no YAML); `height` em fração da altura do quadro."""
     return (grass >= cfg_shots["main_grass_min"] and board >= cfg_shots["main_board_min"]
             and people >= cfg_shots["main_people_min"] and 0 < height <= cfg_shots["main_height_max"])
 

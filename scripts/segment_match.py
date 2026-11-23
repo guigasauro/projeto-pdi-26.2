@@ -48,7 +48,7 @@ def main() -> None:
                 if b - a >= sc["probe_min_frames"] else (0, 0.0)
             table.append({"a": a, "b": b, "frame_a": int(R["frame"][a]), "frame_b": int(R["frame"][b - 1]) + 1,
                           "grass": grass, "board": board, "people": people, "height": height,
-                          "main": shots.is_main(grass, board, people, height, sc)})
+                          "main": shots.is_main(grass, board, people, height / cap.get(cv2.CAP_PROP_FRAME_HEIGHT), sc)})
         (out / "shots.json").write_text(json.dumps(table, indent=1))
         n_main = sum(s["main"] for s in table)
         t_main = sum(s["b"] - s["a"] for s in table if s["main"]) / fps

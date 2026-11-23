@@ -164,7 +164,10 @@ $1024\times576$ pixels a 30 quadros por segundo. A prorrogação não está nos 
 Cada vídeo inclui trechos que não são jogo (pré-jogo, intervalo); o início e o fim
 de cada tempo foram localizados pelo relógio da transmissão (105,6~min de jogo no
 total). Essa partida não tem gabarito de posições: a avaliação é feita por etapa
-(Seção~\ref{sec:res_partida}).
+(Seção~\ref{sec:res_partida}). Para validar a separação em tomadas, foi usada uma
+partida do SoccerNet \cite{deliege2021} com o gabarito de trocas de câmera: Liverpool
+$3\times0$ Manchester City (Premier League 2015--16), em 720p a 25 quadros por
+segundo, 45~min por tempo.
 
 % ── 2.2 ──────────────────────────────────────────────────────────────────────
 \subsection{Visão Geral do Pipeline}
@@ -424,7 +427,7 @@ presença do placar também é medida em todo quadro, por casamento de padrões
 cada troca de presença, depois de um filtro de mediana de 0,5~s, também conta como
 corte. Uma tomada é considerada da câmera principal ao vivo quando tem gramado em
 pelo menos metade do quadro, placar em pelo menos metade dos quadros e, no quadro
-central (YOLO), pelo menos 6 pessoas no gramado com altura mediana de no máximo
+central (YOLO), pelo menos 4 pessoas no gramado com altura mediana de no máximo
 20,8\% da altura da imagem (close-ups mostram poucas pessoas grandes).
 
 \paragraph{Marcação.} A ferramenta de marcação apresenta as tomadas da câmera
@@ -851,13 +854,31 @@ que misturam dois jogadores (Seção~\ref{sec:res_times}), aparece com duas manc
 \label{sec:res_partida}
 
 \paragraph{Tomadas.} Os 105,6~min de jogo da final foram separados em tomadas, das
-quais 149 são da câmera principal ao vivo, somando 58,1~min (55\%;
+quais 150 são da câmera principal ao vivo, somando 58,2~min (55\%;
 Figura~\ref{fig:tomadas}). Antes de os cortes por troca de placar serem incluídos,
 duas sequências de replays ligadas por fusões (135~s e 115~s) eram aceitas como
 câmera principal; depois, nenhuma. As tomadas da câmera principal têm mediana de
 15~s e máximo de 113~s; as 29 mais longas cobrem metade do tempo.
-\pendente{precisão e revocação do filtro contra o gabarito de câmeras do SoccerNet
-(Liverpool $\times$ Manchester City).}
+
+No Liverpool $\times$ Manchester City, o filtro foi comparado quadro a quadro com o
+gabarito de câmeras do SoccerNet, considerando positiva a câmera principal ao vivo
+(central, esquerda ou direita, sem replay; Figura~\ref{fig:tomadas_gt}). Com o limiar
+original de 6 pessoas, ajustado na final, a precisão foi de 0,967 e a revocação de
+0,949; quase todas as perdas eram tomadas da câmera principal com menos de 6 pessoas
+no quadro central (155~s). Entre 2 e 5 pessoas a revocação fica entre 0,987 e 0,990
+com a mesma precisão, e o limiar passou a 4, o meio dessa faixa: precisão 0,968,
+revocação 0,987, F1 0,977. Na final, a mudança acrescenta uma tomada. Dos 124~s de
+falsos positivos, 67~s são replays da própria câmera principal: nessa emissora o
+placar continua na tela durante o replay, e o filtro não tem como distingui-los de
+um lance ao vivo. O restante são close-ups (39~s) e outras tomadas (18~s).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{08_tomadas_vs_gt_liverpool-x-manchester_city.png}
+    \caption{Câmera principal ao vivo segundo o gabarito do SoccerNet (verde) e segundo
+             o filtro (azul), Liverpool $\times$ Manchester City.}
+    \label{fig:tomadas_gt}
+\end{figure}
 
 \begin{figure}[H]
     \centering
@@ -1123,6 +1144,11 @@ Y.~Zhang et al.
 V.~Somers et al.
 \newblock SoccerNet Game State Reconstruction: end-to-end athlete tracking and identification on a minimap.
 \newblock In \emph{CVPR Workshops}, 2024.
+
+\bibitem{deliege2021}
+A.~Deliège et al.
+\newblock SoccerNet-v2: a dataset and benchmarks for holistic understanding of broadcast soccer videos.
+\newblock In \emph{CVPR Workshops}, 2021.
 
 \bibitem{lowe2004}
 D.~G. Lowe.

@@ -1,0 +1,28 @@
+{
+  "partida": "Liverpool 3 x 0 Manchester City, Premier League 2015-16 (SoccerNet)",
+  "nota": "vídeos do SoccerNet cortados em 45:00 a partir da saída de bola de cada tempo (acréscimos fora)",
+  "tempos": {
+    "1": {
+      "video": "data/raw/SoccerNet/england_epl/2015-2016/2016-03-02 - 23-00 Liverpool 3 - 0 Manchester City/1_720p.mkv",
+      "inicio": "0:00",
+      "fim": "45:00"
+    },
+    "2": {
+      "video": "data/raw/SoccerNet/england_epl/2015-2016/2016-03-02 - 23-00 Liverpool 3 - 0 Manchester City/2_720p.mkv",
+      "inicio": "0:00",
+      "fim": "45:00"
+    }
+  },
+  "placar": {
+    "template": "data/annotations/liverpool-x-manchester_city_placar.png",
+    "roi": [
+      140,
+      640,
+      260,
+      705
+    ],
+    "nota": "recorte da caixa LIV do placar (1º tempo, 5:00); roi = x0, y0, x1, y1"
+  },
+  "soccernet_cameras": "data/raw/SoccerNet/england_epl/2015-2016/2016-03-02 - 23-00 Liverpool 3 - 0 Manchester City/Labels-cameras.json",
+  "soccernet_eventos": "data/raw/SoccerNet/england_epl/2015-2016/2016-03-02 - 23-00 Liverpool 3 - 0 Manchester City/Labels-v2.json"
+}

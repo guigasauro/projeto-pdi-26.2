@@ -10,6 +10,12 @@ real no campo (GT, metros), frame a frame. Mostra quanto uma H fixa se degrada q
 
 `team`: casa os tracks em cache com o GT (IoU >= 0,5) e mede a acurácia do time (left/right) dos jogadores
 de linha, por descritor e com/sem remoção de grama e votação temporal (ablações 1 e 2).
+
+  python scripts/evaluate.py shots data/annotations/liverpool-x-manchester_city.json
+
+`shots`: compara o filtro da câmera principal (outputs/<partida>/<tempo>/shots.json, de segment_match.py)
+com o Labels-cameras.json do SoccerNet (chave "soccernet_cameras" do JSON da partida), quadro a quadro:
+gabarito = "Main camera center/left/right" ao vivo (sem replay).
 """
 import argparse
 import json
@@ -237,6 +243,64 @@ def eval_heatmap(args: argparse.Namespace, cfg: dict) -> None:
         print(f"ponto {name}: erro mediano {np.nanmedian(err):.2f} m, p90 {np.nanpercentile(err, 90):.2f} m ({len(err)} detecções)")
 
 
+GT_MAIN = ("Main camera center", "Main camera left", "Main camera right")
+
+
+def gt_main_frames(cameras_json: str, half: str, n_frames: int, fps: float) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """Rótulo do gabarito por quadro do vídeo do tempo `half`: (é câmera principal ao vivo, índice do rótulo,
+    nomes dos rótulos; índice + len(nomes) = replay).
+    Cada anotação marca uma troca de câmera e o rótulo descreve a tomada que termina nela (conferido
+    nos quadros do Liverpool × City: aos 31 s, rotulado "Main camera center" na troca de 29,9 s, já é close-up;
+    de 63 a 87 s, rotulado "Close-up" na troca de 63,5 s, é câmera principal). Depois da última troca não há gabarito."""
+    ann = sorted((a for a in json.load(open(cameras_json))["annotations"] if a["gameTime"].startswith(half + " ")),
+                 key=lambda a: int(a["position"]))
+    main, lab = np.zeros(n_frames, bool), np.full(n_frames, -1)
+    labels = sorted({a["label"] for a in json.load(open(cameras_json))["annotations"]})
+    for prev, a in zip([None] + ann[:-1], ann):
+        f0 = 0 if prev is None else round(int(prev["position"]) / 1000 * fps)
+        f1 = round(int(a["position"]) / 1000 * fps)
+        main[f0:f1] = a["label"] in GT_MAIN and a["replay"] == "real-time"
+        lab[f0:f1] = labels.index(a["label"]) + (len(labels) if a["replay"] != "real-time" else 0)
+    return main, lab, labels
+
+
+def eval_shots(args: argparse.Namespace, cfg: dict) -> None:
+    from src import shots as shots_mod
+    M = json.load(open(args.match)); name = Path(args.match).stem
+    tot = np.zeros(4)                                    # vp, fp, fn, vn (quadros)
+    fp_by, fn_by, rows = {}, {}, []
+    for half, v in M["tempos"].items():
+        cap = cv2.VideoCapture(v["video"]); fps = cap.get(cv2.CAP_PROP_FPS)
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        gt, lab, labels = gt_main_frames(M["soccernet_cameras"], half, n, fps)
+        ours = np.zeros(n, bool)
+        for s in json.load(open(f"outputs/{name}/{half}/shots.json")):
+            ours[s["frame_a"]:s["frame_b"]] = s["main"]
+        f0, f1 = round(shots_mod.mmss(v["inicio"]) * fps), round(shots_mod.mmss(v["fim"]) * fps)
+        g, o, l = gt[f0:f1], ours[f0:f1], lab[f0:f1]
+        g, o, l = g[l >= 0], o[l >= 0], l[l >= 0]          # antes da 1ª anotação do tempo não há gabarito
+        tot += [(g & o).sum(), (~g & o).sum(), (g & ~o).sum(), (~g & ~o).sum()]
+        for d, m in ((fp_by, ~g & o), (fn_by, g & ~o)):
+            for i, c in zip(*np.unique(l[m], return_counts=True)):
+                k = "?" if i < 0 else labels[i % len(labels)] + (" (replay)" if i >= len(labels) else "")
+                d[k] = d.get(k, 0) + c / fps
+        rows.append((half, gt[f0:f1], ours[f0:f1], fps))   # figura: linha do tempo inteira
+    vp, fp, fn, vn = tot
+    print(f"quadros: VP {vp:.0f} FP {fp:.0f} FN {fn:.0f} VN {vn:.0f}")
+    print(f"precisão {vp / (vp + fp):.3f}  revocação {vp / (vp + fn):.3f}  F1 {2 * vp / (2 * vp + fp + fn):.3f}  "
+          f"acurácia {(vp + vn) / tot.sum():.3f}")
+    print("falsos positivos (s) por rótulo do gabarito:", {k: round(v) for k, v in sorted(fp_by.items(), key=lambda kv: -kv[1])})
+    print("falsos negativos (s) por rótulo do gabarito:", {k: round(v) for k, v in sorted(fn_by.items(), key=lambda kv: -kv[1])})
+    fig, axs = plt.subplots(len(rows), 1, figsize=(12, 1.4 * len(rows)), squeeze=False)
+    for ax, (half, g, o, fps) in zip(axs[:, 0], rows):
+        t = np.arange(len(g)) / fps / 60
+        ax.fill_between(t, 1, 2, where=g, color="tab:green", step="post", label="gabarito (principal ao vivo)")
+        ax.fill_between(t, 0, 1, where=o, color="tab:blue", step="post", label="filtro")
+        ax.set_yticks([0.5, 1.5], ["filtro", "gabarito"]); ax.set_xlim(0, t[-1]); ax.set_title(f"{half}º tempo", fontsize=9)
+    axs[-1, 0].set_xlabel("min do vídeo")
+    fig.tight_layout(); fig.savefig(f"outputs/figures/08_tomadas_vs_gt_{name}.png", dpi=150)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -248,6 +312,8 @@ def main() -> None:
     t.add_argument("--tracks", default="outputs/clip01/cache/tracks.npz")
     hm = sub.add_parser("heatmap")
     hm.add_argument("video"); hm.add_argument("--gt", required=True)
+    sh = sub.add_parser("shots")
+    sh.add_argument("match")
     ap.add_argument("--config", default="configs/default.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
@@ -257,6 +323,8 @@ def main() -> None:
         eval_team(args, cfg)
     elif args.cmd == "heatmap":
         eval_heatmap(args, cfg)
+    elif args.cmd == "shots":
+        eval_shots(args, cfg)
 
 
 if __name__ == "__main__":

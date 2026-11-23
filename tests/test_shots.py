@@ -3,7 +3,7 @@ import numpy as np
 from src.shots import cuts, hsv_hist, is_main, mmss, segments
 
 SC = {"cut_thresh": 0.3, "cut_min_frames": 5, "board_thresh": 0.8, "board_median_frames": 5,
-      "main_grass_min": 0.5, "main_board_min": 0.5, "main_people_min": 6, "main_height_max": 120}
+      "main_grass_min": 0.5, "main_board_min": 0.5, "main_people_min": 6, "main_height_max": 0.208}
 
 
 def test_mmss():
@@ -28,6 +28,6 @@ def test_identical_frames_have_zero_distance():
 
 
 def test_main_rule():
-    assert is_main(0.8, 1.0, 18, 55, SC)
-    assert not is_main(0.8, 1.0, 2, 400, SC)        # close-up
-    assert not is_main(0.8, 0.0, 18, 55, SC)        # replay da câmera principal (sem placar)
+    assert is_main(0.8, 1.0, 18, 55 / 576, SC)
+    assert not is_main(0.8, 1.0, 2, 400 / 576, SC)  # close-up
+    assert not is_main(0.8, 0.0, 18, 55 / 576, SC)  # replay da câmera principal (sem placar)

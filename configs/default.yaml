@@ -80,8 +80,8 @@ shots:
   # tomada da câmera principal ao vivo: gráfico gramado × altura dos jogadores (Barça x Real) tem um grupo
   # isolado com gramado > 0.6, altura 40-80 px e > 8 pessoas; close-ups ficam acima de 150 px
   main_grass_min: 0.5      # mediana da fração de gramado na tomada
-  main_height_max: 120     # altura mediana (px) das pessoas no quadro central
-  main_people_min: 6       # pessoas no gramado no quadro central
+  main_height_max: 0.208   # altura mediana das pessoas no quadro central, em fração da altura do quadro (Barça 576p: 120 px)
+  main_people_min: 4       # pessoas no gramado no quadro central; Liverpool × City vs. gabarito de câmeras do SoccerNet: 2-5 → revocação 0.987-0.990, precisão 0.963-0.968; 6 → 0.949; 8 → 0.883
   main_board_min: 0.5      # fração dos quadros com placar (sem placar = replay/gráfico)
   probe_min_frames: 15     # tomadas mais curtas não passam pelo YOLO e contam como "outras"
   board_median_frames: 15  # mediana de 0,5 s na presença do placar (piscadas do gráfico não viram corte)
