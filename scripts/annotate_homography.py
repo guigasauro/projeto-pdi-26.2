@@ -197,20 +197,20 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
 
 
 def match_camera(done: dict, M: dict, cfg: dict) -> tuple[np.ndarray, list[np.ndarray]] | None:
-    """Centro da câmera e câmeras candidatas a partir das marcações com homografia geral (as feitas
-    já com o modelo de câmera fixa não entram: repetiriam o próprio centro). None se ainda houver poucas."""
-    lc = cfg["lines"]
-    Hs = [np.array(s["H_img_to_pitch"]) for s in done.values()
-          if "H_img_to_pitch" in s and s.get("modelo", "homografia") == "homografia"]
+    """Centro da câmera e câmeras candidatas (`camera.from_marks`). None enquanto houver poucas
+    marcações com homografia geral para o chute inicial do centro."""
+    lc, pc = cfg["lines"], cfg["pitch"]
+    marks = [s for s in done.values() if "H_img_to_pitch" in s]
     cap = cv2.VideoCapture(M["tempos"]["1"]["video"])
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    good = [H for H in Hs if camera.decompose(H, w, h)[2] <= lc["center_max_resid"]]
-    if len(good) < lc["center_min_marks"]:
-        print(f"{len(good)} marcações boas: usando a homografia geral (4+ pontos) até ter {lc['center_min_marks']}")
+    n = sum(camera.decompose(np.array(s["H_img_to_pitch"]), w, h)[2] <= lc["center_max_resid"]
+            for s in marks if s.get("modelo", "homografia") == "homografia")
+    if n < lc["center_min_marks"]:
+        print(f"{n} marcações boas: usando a homografia geral (4+ pontos) até ter {lc['center_min_marks']}")
         return None
-    C = camera.estimate_center(good, w, h, lc["center_max_resid"])
-    print(f"câmera fixa em {np.round(C, 1)} m (de {len(good)} marcações): 3+ pontos bastam")
-    return C, [camera.fit(H, C, w, h) for H in good]
+    C, P = camera.from_marks(marks, pitch.keypoints(pc["length_m"], pc["width_m"]), w, h, lc["center_max_resid"])
+    print(f"câmera fixa em {np.round(C, 1)} m (ajuste conjunto de {len(P)} marcações): 3+ pontos bastam")
+    return C, P
 
 
 def main() -> None:

@@ -46,3 +46,18 @@ def test_line_refinement_recovers_camera():
     from src.homography import project
     probe = project(camera.to_homography(p, C, W, H), [[200, 300], [800, 400], [512, 550]])   # pontos visíveis
     assert score > 0.9 and np.abs(camera.project(q, C, W, H, probe) - camera.project(p, C, W, H, probe)).max() < 4.0   # linha de 3 px + viés do termo de regularização
+
+
+def test_refine_center_from_noisy_clicks():
+    rng = np.random.default_rng(0)
+    pts = np.array([[x, y] for x in (0, 16.5, 36, 52.5, 69, 88.5, 105) for y in (0, 13.85, 34, 54.15, 68)], float)
+    marks, inits = [], []
+    for tx, f in [(15, 2200), (35, 1500), (52, 1200), (75, 1600), (92, 2400)]:
+        p = _look_at(np.array([tx, 34.0, 0.0]), f)
+        img = camera.project(p, C, W, H, pts)
+        ok = (img[:, 0] > 0) & (img[:, 0] < W) & (img[:, 1] > 0) & (img[:, 1] < H)
+        marks.append((img[ok] + rng.normal(0, 1.5, (ok.sum(), 2)), pts[ok]))
+    C0 = C + [3.0, -5.0, 1.5]                                # chute do centro errado, como o da mediana
+    inits = [camera.fit_points(pi, pp, C0, W, H, _look_at(np.array([52.5, 34.0, 0.0]), 1500)) for pi, pp in marks]
+    Cq, _ = camera.refine_center(C0, marks, inits, W, H)
+    assert np.linalg.norm(Cq - C) < 1.5

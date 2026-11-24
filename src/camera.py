@@ -55,6 +55,39 @@ def estimate_center(Hs: list[np.ndarray], w: int, h: int, max_resid: float) -> n
     return np.median(Cs, axis=0)
 
 
+def refine_center(C0: np.ndarray, marks: list[tuple[np.ndarray, np.ndarray]], inits: list[np.ndarray],
+                  w: int, h: int) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Ajuste conjunto (bundle adjustment): um C para todas as marcações e (rotação, f) de cada uma,
+    minimizando o erro de reprojeção dos cliques em pixels. A mediana dos C de cada homografia isolada
+    é ruidosa (C se confunde com f ao longo da direção de visada); com todos os cliques juntos, não.
+    `marks` = [(pts_img, pts_pitch)], `inits` = parâmetros iniciais de cada marcação."""
+    n = len(marks)
+
+    def resid(x: np.ndarray) -> np.ndarray:
+        P = x[3:].reshape(n, 4)
+        return np.concatenate([(project(P[i], x[:3], w, h, pp) - pi).ravel() for i, (pi, pp) in enumerate(marks)])
+
+    x = least_squares(resid, np.r_[C0, np.ravel(inits)], loss="soft_l1", f_scale=3.0).x
+    return x[:3], list(x[3:].reshape(n, 4))
+
+
+def from_marks(marks: list[dict], kp: dict, w: int, h: int, max_resid: float) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Centro da câmera e parâmetros de cada marcação (JSON `<partida>_homografias.json`, só as salvas).
+    C inicial: mediana das homografias gerais bem condicionadas (`estimate_center`); depois, ajuste
+    conjunto com os cliques de todas as marcações, inclusive as feitas já com a câmera fixa."""
+    general = [np.array(s["H_img_to_pitch"]) for s in marks if s.get("modelo", "homografia") == "homografia"]
+    C0 = estimate_center(general, w, h, max_resid)
+    good = [fit(H, C0, w, h) for H in general if decompose(H, w, h)[2] <= max_resid]
+    data, inits = [], []
+    for s in marks:
+        pi, pp = np.array([q["img"] for q in s["points"]]), np.array([kp[q["name"]] for q in s["points"]])
+        H = np.array(s["H_img_to_pitch"]) if s.get("modelo", "homografia") == "homografia" else None
+        p, _ = anchor(pi, pp, H, C0, w, h, good)
+        if p is not None:
+            data.append((pi, pp)); inits.append(p)
+    return refine_center(C0, data, inits, w, h)
+
+
 def image_grid(w: int, h: int, n: int = 8) -> np.ndarray:
     """Grade de pontos da imagem (metade de baixo e meio: onde fica o gramado)."""
     xs, ys = np.meshgrid(np.linspace(0.05 * w, 0.95 * w, n), np.linspace(0.3 * h, 0.95 * h, n))

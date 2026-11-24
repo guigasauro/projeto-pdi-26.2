@@ -81,10 +81,8 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
     step, tc, pc, lc = cfg["video"]["frame_step"], cfg["team"], cfg["pitch"], cfg["lines"]
     marked = sorted((s for s in ann.values() if "H_img_to_pitch" in s), key=lambda s: (s["tempo"], s["frame_a"]))
     w, h = (int(cv2.VideoCapture(M_info["tempos"]["1"]["video"]).get(p)) for p in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT))
-    general = [np.array(s["H_img_to_pitch"]) for s in marked if s.get("modelo", "homografia") == "homografia"]
-    C = camera.estimate_center(general, w, h, lc["center_max_resid"])   # marcações já feitas na câmera fixa não entram
     kp = pitch.keypoints(pc["length_m"], pc["width_m"])
-    good = [camera.fit(H, C, w, h) for H in general if camera.decompose(H, w, h)[2] <= lc["center_max_resid"]]
+    C, good = camera.from_marks(marked, kp, w, h, lc["center_max_resid"])
     log.info("centro da câmera (m): %s, de %d marcações", np.round(C, 1), len(good))
     shots = []
     for s in marked:
@@ -93,7 +91,7 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
             raise ValueError(f"tomada {s['tempo']}:{a}: quadro marcado {s['frame']} fora da amostragem (step {step})")
         pts_img = np.array([q["img"] for q in s["points"]])
         p_k, err = camera.anchor(pts_img, np.array([kp[q["name"]] for q in s["points"]]),
-                                 np.array(s["H_img_to_pitch"]), C, w, h, good)
+                                 None, C, w, h, good)
         if err > lc["anchor_max_px"]:
             log.warning("tomada %s:%d descartada: cliques não batem com a câmera (erro mediano %.0f px); remarque",
                         s["tempo"], a, err)
