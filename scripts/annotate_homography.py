@@ -160,6 +160,7 @@ def single(args: argparse.Namespace, cfg: dict) -> None:
 
 def match(args: argparse.Namespace, cfg: dict) -> None:
     M = json.load(open(args.match))
+    cfg = pitch.for_match(cfg, M)
     name = Path(args.match).stem
     out = Path(f"data/annotations/{name}_homografias.json")
     done = json.loads(out.read_text()) if out.exists() else {}

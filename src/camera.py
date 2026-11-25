@@ -74,15 +74,19 @@ def refine_center(C0: np.ndarray, marks: list[tuple[np.ndarray, np.ndarray]], in
 def from_marks(marks: list[dict], kp: dict, w: int, h: int, max_resid: float) -> tuple[np.ndarray, list[np.ndarray]]:
     """Centro da câmera e parâmetros de cada marcação (JSON `<partida>_homografias.json`, só as salvas).
     C inicial: mediana das homografias gerais bem condicionadas (`estimate_center`); depois, ajuste
-    conjunto com os cliques de todas as marcações, inclusive as feitas já com a câmera fixa."""
-    general = [np.array(s["H_img_to_pitch"]) for s in marks if s.get("modelo", "homografia") == "homografia"]
+    conjunto com os cliques de todas as marcações, inclusive as feitas já com a câmera fixa.
+    As homografias gerais são recalculadas dos cliques com `kp` (a H salva pode ser de outra medida de campo)."""
+    def clicks(s: dict) -> tuple[np.ndarray, np.ndarray]:
+        return np.array([q["img"] for q in s["points"]]), np.array([kp[q["name"]] for q in s["points"]])
+
+    general = [cv2.findHomography(*clicks(s), 0)[0] for s in marks if s.get("modelo", "homografia") == "homografia"]
     C0 = estimate_center(general, w, h, max_resid)
     good = [fit(H, C0, w, h) for H in general if decompose(H, w, h)[2] <= max_resid]
     data, inits = [], []
     for s in marks:
-        pi, pp = np.array([q["img"] for q in s["points"]]), np.array([kp[q["name"]] for q in s["points"]])
-        H = np.array(s["H_img_to_pitch"]) if s.get("modelo", "homografia") == "homografia" else None
-        p, _ = anchor(pi, pp, H, C0, w, h, good)
+        pi, pp = clicks(s)
+        p, _ = anchor(pi, pp, cv2.findHomography(pi, pp, 0)[0] if s.get("modelo", "homografia") == "homografia" else None,
+                      C0, w, h, good)
         if p is not None:
             data.append((pi, pp)); inits.append(p)
     return refine_center(C0, data, inits, w, h)

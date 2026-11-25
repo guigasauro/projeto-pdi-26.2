@@ -10,7 +10,6 @@ um tempo por outra câmera), o lado de cada time sai dos dados (`last_defender_v
 defende a esquerda mudou, as posições do 2º tempo giram 180° (X → L − X, Y → W − Y) e cada time fica
 sempre atacando no sentido do 1º tempo.
 """
-import copy
 import hashlib
 import json
 import logging
@@ -25,9 +24,10 @@ from src.pipeline import _load_or, positions, team_heatmaps
 log = logging.getLogger(__name__)
 
 
-def match_cfg(cfg: dict) -> dict:
-    """Configuração com o `frame_step` da partida (os módulos leem `video.frame_step`)."""
-    c = copy.deepcopy(cfg)
+def match_cfg(cfg: dict, M_info: dict) -> dict:
+    """Configuração com o `frame_step` e a medida do campo da partida (os módulos leem `video.frame_step`
+    e `pitch`)."""
+    c = pitch.for_match(cfg, M_info)
     c["video"]["frame_step"] = cfg["match"]["frame_step"]
     return c
 
@@ -73,8 +73,8 @@ def last_defender_votes(pos: np.ndarray, cfg_match: dict, length: float) -> np.n
 
 def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) -> dict:
     """Processa as tomadas marcadas (as já processadas vêm do cache) e soma os heatmaps por time."""
-    cfg = match_cfg(cfg)
     M_info = json.loads(Path(match_json).read_text())
+    cfg = match_cfg(cfg, M_info)
     name = Path(match_json).stem
     out_dir = Path(out_dir or f"outputs/{name}")
     ann = json.loads(Path(f"data/annotations/{name}_homografias.json").read_text())
@@ -100,7 +100,7 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
         cache = out_dir / s["tempo"] / "tomadas" / str(a)
         log.info("tomada %s:%d (%d quadros)", s["tempo"], a, b - a)
         r = process_shot(video, a, b, cfg, cache)
-        tag = hashlib.md5(json.dumps([p_k.round(5).tolist(), k, C.round(2).tolist(), lc]).encode()).hexdigest()[:8]
+        tag = hashlib.md5(json.dumps([p_k.round(5).tolist(), k, C.round(2).tolist(), lc, pc]).encode()).hexdigest()[:8]
         f = cache / f"camera_{tag}.npz"
         if f.exists():
             Hs, score = (np.load(f)[x] for x in ("Hs", "score"))

@@ -22,5 +22,10 @@
       70
     ],
     "nota": "recorte da caixa FCB do placar (1.mp4, 20:00); roi = x0, y0, x1, y1 onde procurar"
-  }
+  },
+  "campo": [
+    105,
+    68
+  ],
+  "nota_campo": "La Cartuja (Sevilha): 105 x 68 m (marcações: melhor ajuste entre 103-106 x 66-70)"
 }

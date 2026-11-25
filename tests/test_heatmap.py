@@ -38,3 +38,11 @@ def test_last_defender_votes():
     pos = np.array([[0, 1, 0, 3.0, 34], [0, 2, 1, 12.0, 30], [0, 3, 0, 20.0, 40], [0, 4, 1, 25.0, 20]])
     v = last_defender_votes(pos, cfg, 105.0)
     assert v.tolist() == [[0, 1], [0, 0]]
+
+
+def test_pitch_for_match_uses_match_dimensions():
+    from src import pitch
+    cfg = {"pitch": {"length_m": 105, "width_m": 68, "px_per_m": 10}}
+    c = pitch.for_match(cfg, {"campo": [101, 68]})
+    assert (c["pitch"]["length_m"], c["pitch"]["width_m"]) == (101, 68) and cfg["pitch"]["length_m"] == 105
+    assert pitch.for_match(cfg, {})["pitch"]["length_m"] == 105

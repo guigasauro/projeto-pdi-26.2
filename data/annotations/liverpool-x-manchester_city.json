@@ -24,5 +24,10 @@
     "nota": "recorte da caixa LIV do placar (1º tempo, 5:00); roi = x0, y0, x1, y1"
   },
   "soccernet_cameras": "data/raw/SoccerNet/england_epl/2015-2016/2016-03-02 - 23-00 Liverpool 3 - 0 Manchester City/Labels-cameras.json",
-  "soccernet_eventos": "data/raw/SoccerNet/england_epl/2015-2016/2016-03-02 - 23-00 Liverpool 3 - 0 Manchester City/Labels-v2.json"
+  "soccernet_eventos": "data/raw/SoccerNet/england_epl/2015-2016/2016-03-02 - 23-00 Liverpool 3 - 0 Manchester City/Labels-v2.json",
+  "campo": [
+    101,
+    68
+  ],
+  "nota_campo": "Anfield: 101 x 68 m (Premier League; marcações: erro p90 10,2 px com 105 x 68, 6,6 px com 101 x 68)"
 }

@@ -4,6 +4,8 @@ Coordenadas em metros: origem no canto superior esquerdo, X ao longo do comprime
 Y ao longo da largura (0..W), Y crescendo para o lado da câmera (lado de baixo no top-view).
 SoccerNet usa origem no centro: X = x + L/2, Y = y + W/2.
 """
+import copy
+
 import cv2
 import numpy as np
 
@@ -104,3 +106,13 @@ def debug_view(cfg: dict) -> np.ndarray:
         ty = y - 4 if "sup" in name or "fundo" in name else y + 12
         cv2.putText(img_bgr, name, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 255), 1, cv2.LINE_AA)
     return img_bgr
+
+
+def for_match(cfg: dict, match: dict) -> dict:
+    """Configuração com a medida do campo da partida (`"campo": [L, W]` no JSON da partida, em metros).
+    A regra permite 90-120 × 45-90 m (100-110 × 64-75 em jogos internacionais); supor 105 × 68 num campo
+    de 101 m desloca as áreas em até 2 m e a câmera fixa não consegue encaixar nos cliques."""
+    c = copy.deepcopy(cfg)
+    if "campo" in match:
+        c["pitch"]["length_m"], c["pitch"]["width_m"] = match["campo"]
+    return c
