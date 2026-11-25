@@ -14,6 +14,7 @@ usa o modelo de câmera fixa (src/camera.py, 4 parâmetros): bastam 3 pontos, me
 Teclas:  u = desfaz o último par   s = salva   q/Esc = sai   h = mostra/esconde as linhas projetadas
          a / d = volta / avança 1 s (escolha um quadro com linhas visíveis; os pares são descartados)
          n = pula a tomada (só no modo partida; ex.: nenhuma marcação do campo visível)
+         z = desfaz a última tomada salva ou pulada e volta a ela (só no modo partida)
 Saída: data/annotations/<clip>.json  ou  data/annotations/<partida>_homografias.json
 """
 import argparse
@@ -30,7 +31,7 @@ from src import camera, homography, pitch  # noqa: E402
 
 SNAP_M = 3.0      # distância máxima (m) do clique no modelo até um ponto notável
 VIEW_W = 1280     # largura da janela do frame (a imagem é só reescalada para exibir)
-KEYS = {ord("s"): "save", ord("n"): "skip", ord("a"): "back", ord("d"): "fwd", ord("q"): "quit", 27: "quit"}
+KEYS = {ord("s"): "save", ord("n"): "skip", ord("a"): "back", ord("d"): "fwd", ord("q"): "quit", 27: "quit", ord("z"): "undo"}
 
 
 def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool,
@@ -95,7 +96,7 @@ def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool,
 
     cv2.namedWindow("frame"); cv2.setMouseCallback("frame", on_frame)
     cv2.namedWindow("campo"); cv2.setMouseCallback("campo", on_pitch)
-    help_txt = "u=desfaz s=salva h=linhas a/d=-/+1s " + ("n=pula " if allow_skip else "") + "q=sai"
+    help_txt = "u=desfaz s=salva h=linhas a/d=-/+1s " + ("n=pula z=desfaz tomada " if allow_skip else "") + "q=sai"
     while True:
         P = np.array([kp[n] for n in names]) if names else None
         view = homography.debug_view(img_bgr, H[0], lines, np.array(pts_img), P) if H[0] is not None and overlay else img_bgr.copy()
@@ -122,7 +123,7 @@ def annotate(img_bgr: np.ndarray, cfg: dict, header: str, allow_skip: bool,
             overlay = not overlay
         elif action == "save" and H[0] is None:
             print(f"precisa de pelo menos {3 if cam else 4} pares válidos para salvar")
-        elif action == "skip" and not allow_skip:
+        elif action in ("skip", "undo") and not allow_skip:
             continue
         elif action:
             return action, H[0], pts_img, names
@@ -170,9 +171,12 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
                 todo.append((s["frame_b"] - s["frame_a"], half, v["video"], s["frame_a"], s["frame_b"]))
     todo.sort(reverse=True)
     total = sum(t[0] for t in todo)
-    for i, (n, half, video, a, b) in enumerate(todo):
+    i = 0
+    while i < len(todo):
+        n, half, video, a, b = todo[i]
         key = f"{half}:{a}"
         if key in done:
+            i += 1
             continue
         fps = cv2.VideoCapture(video).get(cv2.CAP_PROP_FPS)
         f = a
@@ -187,6 +191,16 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
             break
         if action == "quit":
             break
+        if action == "undo":
+            if not done:
+                print("nada para desfazer")
+                continue
+            last = list(done)[-1]                      # o JSON guarda as tomadas na ordem em que foram salvas
+            done.pop(last)
+            out.write_text(json.dumps(done, indent=1, ensure_ascii=False))
+            print(f"tomada {last} desfeita ({out})")
+            i = next((j for j, t in enumerate(todo) if f"{t[1]}:{t[3]}" == last), i)
+            continue
         done[key] = ({"tempo": half, "frame_a": a, "frame_b": b, "frame": f, "H_img_to_pitch": H.tolist(),
                       "modelo": "ptz" if cam else "homografia",
                       "points": [{"name": nm, "img": [float(x), float(y)]} for nm, (x, y) in zip(names, pts)]}
