@@ -10,3 +10,8 @@ outputs/figures/*
 *.pt
 __pycache__/
 .ipynb_checkpoints/
+
+# relatório (LaTeX, compilado no Overleaf) e modelo da disciplina
+relatorio/
+modelo_relatorio/
+relatorio_overleaf.zip
