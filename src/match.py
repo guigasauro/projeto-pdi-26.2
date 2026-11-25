@@ -87,8 +87,9 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
     shots = []
     for s in marked:
         a, b, k = s["frame_a"], s["frame_b"], s["frame"] - s["frame_a"]
-        if k % step:
-            raise ValueError(f"tomada {s['tempo']}:{a}: quadro marcado {s['frame']} fora da amostragem (step {step})")
+        # a amostragem (1 a cada `step` quadros) começa em a0 para passar pelo quadro marcado
+        # (a 25 fps, a ferramenta de marcação anda 25 quadros por tecla, que não é múltiplo de 3)
+        a0, k = a + k % step, k - k % step
         pts_img = np.array([q["img"] for q in s["points"]])
         p_k, err = camera.anchor(pts_img, np.array([kp[q["name"]] for q in s["points"]]),
                                  None, C, w, h, good)
@@ -97,15 +98,16 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
                         s["tempo"], a, err)
             continue
         video = M_info["tempos"][s["tempo"]]["video"]
-        cache = out_dir / s["tempo"] / "tomadas" / str(a)
-        log.info("tomada %s:%d (%d quadros)", s["tempo"], a, b - a)
-        r = process_shot(video, a, b, cfg, cache)
+        cache = out_dir / s["tempo"] / "tomadas" / str(a0)
+        log.info("tomada %s:%d (%d quadros)", s["tempo"], a, b - a0)
+        r = process_shot(video, a0, b, cfg, cache)
+        r["frame_a"] = a0
         tag = hashlib.md5(json.dumps([p_k.round(5).tolist(), k, C.round(2).tolist(), lc, pc]).encode()).hexdigest()[:8]
         f = cache / f"camera_{tag}.npz"
         if f.exists():
             Hs, score = (np.load(f)[x] for x in ("Hs", "score"))
         else:
-            Hs, score = homography.refine_lines(video, a, b, k, p_k, C, r["M"], r["dets"], cfg)
+            Hs, score = homography.refine_lines(video, a0, b, k, p_k, C, r["M"], r["dets"], cfg)
             np.savez(f, Hs=Hs, score=score)
         Hs[~(score >= lc["min_score"])] = np.nan          # quadro sem linhas suficientes ou desalinhado
         r["Hs"], r["score"] = Hs, score
