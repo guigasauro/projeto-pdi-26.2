@@ -4,6 +4,8 @@ Um vídeo (v1):     python scripts/annotate_homography.py data/clips/clip01.mp4 
 Partida completa:  python scripts/annotate_homography.py --match data/annotations/barcelona-x-real_madrid.json
                    (rode antes scripts/segment_match.py; percorre as tomadas da câmera principal, da mais
                    longa para a mais curta, e retoma de onde parou)
+Remarcar uma tomada: ... --match <partida>.json --tomada 2:55510   (tempo:frame_a, como no terminal;
+                   abre no quadro marcado antes; a marcação antiga só é trocada ao salvar)
 
 Janela "frame": clique num ponto do campo na imagem (círculo amarelo).
 Janela "campo": clique no ponto correspondente do modelo (é ajustado ao ponto notável mais próximo).
@@ -172,17 +174,22 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
                 todo.append((s["frame_b"] - s["frame_a"], half, v["video"], s["frame_a"], s["frame_b"]))
     todo.sort(reverse=True)
     total = sum(t[0] for t in todo)
+    redo = getattr(args, "tomada", None)
+    if redo:
+        todo_all, todo = todo, [t for t in todo if f"{t[1]}:{t[3]}" == redo]
+        if not todo:
+            sys.exit(f"tomada {redo} não está entre as tomadas da câmera principal (formato tempo:frame_a, ex. 2:55510)")
     i = 0
     while i < len(todo):
         n, half, video, a, b = todo[i]
         key = f"{half}:{a}"
-        if key in done:
+        if key in done and not redo:
             i += 1
             continue
         fps = cv2.VideoCapture(video).get(cv2.CAP_PROP_FPS)
-        f = a
+        f = done.get(key, {}).get("frame", a)                 # remarcação: começa no quadro escolhido antes
         while True:
-            covered = sum(t[0] for t in todo if "H_img_to_pitch" in done.get(f"{t[1]}:{t[3]}", {}))
+            covered = sum(t[0] for t in (todo_all if redo else todo) if "H_img_to_pitch" in done.get(f"{t[1]}:{t[3]}", {}))
             header = (f"{half}o tempo | tomada {i + 1}/{len(todo)} ({n / fps:.0f} s) | +{(f - a) / fps:.0f} s | "
                       f"marcado {covered / total:.0%} do tempo")
             action, H, pts, names = annotate(read_frame(video, f), cfg, header, allow_skip=True, cam=cam)
@@ -193,8 +200,8 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
         if action == "quit":
             break
         if action == "undo":
-            if not done:
-                print("nada para desfazer")
+            if not done or redo:
+                print("nada para desfazer" if not done else "z não vale ao remarcar uma tomada; use q para sair sem trocar")
                 continue
             last = list(done)[-1]                      # o JSON guarda as tomadas na ordem em que foram salvas
             done.pop(last)
@@ -202,12 +209,15 @@ def match(args: argparse.Namespace, cfg: dict) -> None:
             print(f"tomada {last} desfeita ({out})")
             i = next((j for j, t in enumerate(todo) if f"{t[1]}:{t[3]}" == last), i)
             continue
+        done.pop(key, None)                                     # remarcada vai para o fim (a tecla z desfaz a última)
         done[key] = ({"tempo": half, "frame_a": a, "frame_b": b, "frame": f, "H_img_to_pitch": H.tolist(),
                       "modelo": "ptz" if cam else "homografia",
                       "points": [{"name": nm, "img": [float(x), float(y)]} for nm, (x, y) in zip(names, pts)]}
                      if action == "save" else {"tempo": half, "frame_a": a, "frame_b": b, "pulada": True})
         out.write_text(json.dumps(done, indent=1, ensure_ascii=False))
         print(f"tomada {key}: {'salva' if action == 'save' else 'pulada'} ({out})")
+        if redo:
+            break
     cv2.destroyAllWindows()
 
 
@@ -235,6 +245,7 @@ def main() -> None:
     ap.add_argument("--frame", type=int, default=0)
     ap.add_argument("--config", default="configs/default.yaml")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--tomada", default=None, help="remarca só esta tomada do modo partida (tempo:frame_a)")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
     if args.match:
