@@ -125,7 +125,10 @@ def main() -> None:
         maps = {t: heatmap.smooth_opencv(g, sigma) for t, g in grids.items()}
         vmax = max(m.max() for m in maps.values()) or None
 
-        orig = label(fit_h(draw_original(img, s["tracks"][i], labels[i], H, L, W), args.altura),
+        # time de cada caixa: o das posições (goleiro já atribuído pela posição); sem câmera, o da cor
+        team_of = {int(t): int(k) for _, t, k, _, _ in pos}
+        teams = [team_of.get(int(b[6]), int(lab)) for b, lab in zip(s["tracks"][i], labels[i])]
+        orig = label(fit_h(draw_original(img, s["tracks"][i], teams, H, L, W), args.altura),
                      "Transmissao: deteccao (YOLO), times por cor e linhas do campo projetadas")
         top = draw_topview(pos, cfg)
         top = label(fit_h(top, args.altura), "Posicoes no campo (homografia)" if H is not None else "sem camera neste quadro")
