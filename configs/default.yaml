@@ -97,6 +97,9 @@ match:
   # quadros vai para o time que defende aquele gol. Barça x Real: os IDs colados à linha de fundo tinham o rótulo
   # do time adversário (goleiros de amarelo/verde caem no grupo da outra cor)
   gk_min_frac: 0.5
+  # em bola parada um defensor na linha fica à frente do goleiro (final, tomada 1:41698: o goleiro do Real é o
+  # mais recuado em só 40% dos quadros); o ID com mais quadros junto ao gol, com pelo menos 1 s, também é goleiro
+  gk_min_rows: 10
   # quadro com câmera errada: > max_outside_frac das pessoas a mais de max_outside_m fora do campo (Theiner et al.
   # 2021 usam 3 m). Barça x Real: com a pose certa, só técnicos e gandulas na lateral (3 de ~20); com pose falsa,
   # de 4 a 17 por quadro, de 30% a 95% do grupo

@@ -85,7 +85,8 @@ def outside_frames(pos: np.ndarray, length: float, width: float, cfg_match: dict
 
 def goalkeeper_tracks(pos: np.ndarray, length: float, width: float, cfg_match: dict) -> dict[int, int]:
     """Goleiro pela posição, não pela cor: o ID que, em pelo menos `gk_min_frac` dos seus quadros, é a pessoa
-    mais recuada junto a um gol (a menos de `gk_zone_m` da linha de fundo, na largura da grande área).
+    mais recuada junto a um gol (a menos de `gk_zone_m` da linha de fundo, na largura da grande área), e o ID
+    que mais quadros passa nessa zona em cada gol.
     Devolve {id: gol (0 = esquerdo, 1 = direito)}."""
     near = np.abs(pos[:, 4] - width / 2) < pitch.PENALTY_WIDTH / 2
     deepest: dict[tuple[int, int], int] = {}
@@ -97,7 +98,16 @@ def goalkeeper_tracks(pos: np.ndarray, length: float, width: float, cfg_match: d
                 key = (int(pos[c][d[c].argmin(), 1]), side)
                 deepest[key] = deepest.get(key, 0) + 1
     rows = dict(zip(*np.unique(pos[:, 1].astype(int), return_counts=True)))
-    return {tid: side for (tid, side), k in deepest.items() if k >= cfg_match["gk_min_frac"] * rows[tid]}
+    out = {tid: side for (tid, side), k in deepest.items() if k >= cfg_match["gk_min_frac"] * rows[tid]}
+    # numa bola parada, um defensor na linha fica à frente do goleiro: o ID que mais tempo passa junto ao gol
+    # (pelo menos `gk_min_rows` quadros) também é o goleiro
+    for side, d in enumerate((pos[:, 3], length - pos[:, 3])):
+        z = near & (d < cfg_match["gk_zone_m"])
+        if z.any():
+            tids, n = np.unique(pos[z, 1].astype(int), return_counts=True)
+            if n.max() >= cfg_match["gk_min_rows"]:
+                out.setdefault(int(tids[n.argmax()]), side)
+    return out
 
 
 def visibility(shots: list[dict], flip: dict[str, bool], length: float, width: float, w: int, h: int,

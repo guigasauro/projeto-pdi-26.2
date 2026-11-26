@@ -42,7 +42,7 @@ def test_last_defender_votes():
 
 def test_outside_frames_and_goalkeeper():
     from src.match import goalkeeper_tracks, outside_frames
-    cfg = {"max_outside_m": 3.0, "max_outside_frac": 0.25, "gk_zone_m": 6.0, "gk_min_frac": 0.5}
+    cfg = {"max_outside_m": 3.0, "max_outside_frac": 0.25, "gk_zone_m": 6.0, "gk_min_frac": 0.5, "gk_min_rows": 3}
     # quadro 0: 1 de 4 fora (técnico na lateral) fica; quadro 1: 3 de 4 fora (pose falsa) sai
     pos = np.array([[0, 1, 0, 50, 30], [0, 2, 1, 60, 30], [0, 3, 0, 70, 30], [0, 4, 1, 50, 75],
                     [1, 1, 0, 50, 80], [1, 2, 1, 60, 80], [1, 3, 0, 70, 80], [1, 4, 1, 50, 30]], float)
@@ -50,6 +50,10 @@ def test_outside_frames_and_goalkeeper():
     # ID 7 é o mais recuado junto ao gol esquerdo nos dois quadros; ID 8 (atacante) fica à frente dele
     pos = np.array([[0, 7, 0, 1.0, 34], [0, 8, 1, 4.0, 30], [1, 7, 0, 2.0, 35], [1, 8, 1, 5.0, 36]], float)
     assert goalkeeper_tracks(pos, 105, 68, cfg) == {7: 0}
+    # bola parada: defensor 9 na linha à frente do goleiro 7 em 2 de 3 quadros, depois sai; 7 fica os 3 quadros
+    pos = np.array([[0, 9, 1, 0.5, 30], [0, 7, 0, 2.0, 34], [1, 9, 1, 0.5, 31], [1, 7, 0, 1.5, 34],
+                    [2, 7, 0, 1.0, 35], [2, 9, 1, 8.0, 30]], float)
+    assert goalkeeper_tracks(pos, 105, 68, cfg)[7] == 0
 
 
 def test_pitch_for_match_uses_match_dimensions():
