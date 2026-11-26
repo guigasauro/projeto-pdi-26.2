@@ -93,6 +93,17 @@ match:
   # lado de cada time (último defensor): Barça × Real, 39 tomadas → 72-79% dos votos para o mesmo time em cada gol;
   # 1º tempo: Real defende a esquerda (confere com o gol do Pedri, 28', no gol da esquerda); 2º tempo: Barça
   gk_zone_m: 6.0           # ignora quem está a menos disso da linha de fundo (goleiro)
+  # goleiro pela posição: ID que é o mais recuado junto ao gol (a menos de gk_zone_m) em >= gk_min_frac dos seus
+  # quadros vai para o time que defende aquele gol. Barça x Real: os IDs colados à linha de fundo tinham o rótulo
+  # do time adversário (goleiros de amarelo/verde caem no grupo da outra cor)
+  gk_min_frac: 0.5
+  # quadro com câmera errada: > max_outside_frac das pessoas a mais de max_outside_m fora do campo (Theiner et al.
+  # 2021 usam 3 m). Barça x Real: com a pose certa, só técnicos e gandulas na lateral (3 de ~20); com pose falsa,
+  # de 4 a 17 por quadro, de 30% a 95% do grupo
+  max_outside_m: 3.0
+  max_outside_frac: 0.25
+  vis_cell_m: 2.0          # grade do mapa de visibilidade do campo (o que a transmissão mostra)
+  vis_every: 10            # 1 a cada 10 quadros com câmera basta para a média
   deep_zone_m: 30.0        # só conta quadros com alguém a menos disso do gol (jogo naquele lado)
   min_players: 6           # quadros com menos jogadores visíveis não votam
   auto_shots: true         # processa também as tomadas da câmera principal sem marcação (relocalização)

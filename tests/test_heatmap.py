@@ -40,6 +40,18 @@ def test_last_defender_votes():
     assert v.tolist() == [[0, 1], [0, 0]]
 
 
+def test_outside_frames_and_goalkeeper():
+    from src.match import goalkeeper_tracks, outside_frames
+    cfg = {"max_outside_m": 3.0, "max_outside_frac": 0.25, "gk_zone_m": 6.0, "gk_min_frac": 0.5}
+    # quadro 0: 1 de 4 fora (técnico na lateral) fica; quadro 1: 3 de 4 fora (pose falsa) sai
+    pos = np.array([[0, 1, 0, 50, 30], [0, 2, 1, 60, 30], [0, 3, 0, 70, 30], [0, 4, 1, 50, 75],
+                    [1, 1, 0, 50, 80], [1, 2, 1, 60, 80], [1, 3, 0, 70, 80], [1, 4, 1, 50, 30]], float)
+    assert outside_frames(pos, 105, 68, cfg).tolist() == [1]
+    # ID 7 é o mais recuado junto ao gol esquerdo nos dois quadros; ID 8 (atacante) fica à frente dele
+    pos = np.array([[0, 7, 0, 1.0, 34], [0, 8, 1, 4.0, 30], [1, 7, 0, 2.0, 35], [1, 8, 1, 5.0, 36]], float)
+    assert goalkeeper_tracks(pos, 105, 68, cfg) == {7: 0}
+
+
 def test_pitch_for_match_uses_match_dimensions():
     from src import pitch
     cfg = {"pitch": {"length_m": 105, "width_m": 68, "px_per_m": 10}}

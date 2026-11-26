@@ -72,6 +72,52 @@ def last_defender_votes(pos: np.ndarray, cfg_match: dict, length: float) -> np.n
     return votes
 
 
+def outside_frames(pos: np.ndarray, length: float, width: float, cfg_match: dict) -> np.ndarray:
+    """Quadros com câmera provavelmente errada: mais de `max_outside_frac` das pessoas projetadas a mais de
+    `max_outside_m` fora do campo (a verificação de Theiner et al. 2021). Técnicos e gandulas na lateral
+    ficam abaixo da fração; uma pose falsa joga boa parte do grupo para fora. `pos` = `positions`."""
+    X, Y = pos[:, 3], pos[:, 4]
+    out = np.maximum.reduce([-X, X - length, -Y, Y - width]) > cfg_match["max_outside_m"]
+    f = pos[:, 0].astype(int)
+    n, n_out = np.bincount(f), np.bincount(f, weights=out)
+    return np.flatnonzero((n > 0) & (n_out > cfg_match["max_outside_frac"] * n))
+
+
+def goalkeeper_tracks(pos: np.ndarray, length: float, width: float, cfg_match: dict) -> dict[int, int]:
+    """Goleiro pela posição, não pela cor: o ID que, em pelo menos `gk_min_frac` dos seus quadros, é a pessoa
+    mais recuada junto a um gol (a menos de `gk_zone_m` da linha de fundo, na largura da grande área).
+    Devolve {id: gol (0 = esquerdo, 1 = direito)}."""
+    near = np.abs(pos[:, 4] - width / 2) < pitch.PENALTY_WIDTH / 2
+    deepest: dict[tuple[int, int], int] = {}
+    for f in np.unique(pos[:, 0]):
+        m = (pos[:, 0] == f) & near
+        for side, d in enumerate((pos[:, 3], length - pos[:, 3])):
+            c = m & (d < cfg_match["gk_zone_m"])
+            if c.any():
+                key = (int(pos[c][d[c].argmin(), 1]), side)
+                deepest[key] = deepest.get(key, 0) + 1
+    rows = dict(zip(*np.unique(pos[:, 1].astype(int), return_counts=True)))
+    return {tid: side for (tid, side), k in deepest.items() if k >= cfg_match["gk_min_frac"] * rows[tid]}
+
+
+def visibility(shots: list[dict], flip: dict[str, bool], length: float, width: float, w: int, h: int,
+               cell_m: float, every: int) -> np.ndarray:
+    """Fração dos quadros (1 a cada `every` com câmera) em que cada célula do campo aparece na imagem:
+    o centro da célula é levado à imagem pela homografia inversa (campo → imagem) e conta se cai dentro do
+    quadro e na frente da câmera. Na orientação do 1º tempo (`flip` = 2º tempo girado)."""
+    gx, gy = np.meshgrid(np.arange(cell_m / 2, length, cell_m), np.arange(cell_m / 2, width, cell_m))
+    G = np.c_[gx.ravel(), gy.ravel(), np.ones(gx.size)]
+    acc, n = np.zeros(gx.size), 0
+    for r in shots:
+        for i in np.flatnonzero(np.isfinite(r["Hs"]).all((1, 2)))[::every]:
+            q = G @ np.linalg.inv(r["Hs"][i]).T
+            u, v = q[:, 0] / q[:, 2], q[:, 1] / q[:, 2]
+            seen = (q[:, 2] > 0) & (u >= 0) & (u < w) & (v >= 0) & (v < h)
+            acc += seen[::-1] if flip[r["tempo"]] else seen        # giro de 180° = grade invertida
+            n += 1
+    return (acc / max(n, 1)).reshape(gx.shape)
+
+
 def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) -> dict:
     """Processa as tomadas marcadas (as já processadas vêm do cache) e soma os heatmaps por time."""
     M_info = json.loads(Path(match_json).read_text())
@@ -127,19 +173,19 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
         shots.append(s | r)
     if not shots:
         raise RuntimeError("nenhuma tomada marcada e válida")
-    # quadros (do vídeo do tempo) com câmera aceita, para a avaliação contra o gabarito (scripts/evaluate.py camera)
-    (out_dir / "cameras.json").write_text(json.dumps([
-        {"tempo": r["tempo"], "frame_a": r["frame_a"], "frame_b": r["frame_b"], "auto": bool(r.get("auto")),
-         "ok": (r["frame_a"] + np.flatnonzero(np.isfinite(r["Hs"]).all((1, 2)))).tolist()} for r in shots]))
 
     # um k-means para a partida: primeiros `calib_frames` quadros processados de cada tomada
     sample = [d for r in shots for d in r["descs"][::step][:tc["calib_frames"]]]
     km = team_classifier.calibrate(sample, tc | {"calib_frames": len(sample)})
-    pos_all, n_frames, crops, votes = [], 0, {}, {}
+    pos_all, n_frames, crops, votes, n_out = [], 0, {}, {}, 0
     for r in shots:
         labels = team_classifier.vote(r["tracks"], team_classifier.classify(km, r["descs"]),
                                       round(tc["vote_window_s"] * r["fps"]))
         r["pos"] = positions(r["tracks"], labels, r["Hs"])
+        bad = outside_frames(r["pos"], pc["length_m"], pc["width_m"], cfg["match"])
+        r["Hs"][bad] = np.nan
+        r["pos"] = r["pos"][~np.isin(r["pos"][:, 0], bad)]
+        n_out += len(bad)
         votes[r["tempo"]] = votes.get(r["tempo"], 0) + last_defender_votes(r["pos"], cfg["match"], pc["length_m"])
         n_frames += int(np.isfinite(r["Hs"]).all((1, 2)).sum())
         if len(crops) < 2 or min(len(c) for c in crops.values()) < 12:
@@ -150,9 +196,20 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
         log.info("tempo %s: último defensor no gol esq %s, no gol dir %s (votos por time) → time %d defende a esquerda",
                  half, v[0].astype(int), v[1].astype(int), left[half])
     ref = left[min(left)]
+    flip = {half: left[half] != ref for half in left}
+    n_gk = 0
     for r in shots:
-        flip = left[r["tempo"]] != ref
-        pos_all.append(rotate_half(r["pos"], pc["length_m"], pc["width_m"]) if flip else r["pos"])
+        # goleiro: o time que defende aquele gol (o uniforme do goleiro não segue a cor do time)
+        for tid, side in goalkeeper_tracks(r["pos"], pc["length_m"], pc["width_m"], cfg["match"]).items():
+            r["pos"][r["pos"][:, 1] == tid, 2] = left[r["tempo"]] if side == 0 else 1 - left[r["tempo"]]
+            n_gk += 1
+        pos_all.append(rotate_half(r["pos"], pc["length_m"], pc["width_m"]) if flip[r["tempo"]] else r["pos"])
+    log.info("%d quadros descartados por pessoas fora do campo; %d IDs de goleiro atribuídos pela posição",
+             n_out, n_gk)
+    # quadros (do vídeo do tempo) com câmera aceita, para a avaliação contra o gabarito (scripts/evaluate.py camera)
+    (out_dir / "cameras.json").write_text(json.dumps([
+        {"tempo": r["tempo"], "frame_a": r["frame_a"], "frame_b": r["frame_b"], "auto": bool(r.get("auto")),
+         "ok": (r["frame_a"] + np.flatnonzero(np.isfinite(r["Hs"]).all((1, 2)))).tolist()} for r in shots]))
     pos = np.vstack(pos_all)
     maps = team_heatmaps(pos, n_frames, cfg)
     total = sum(len(range(0, r["frame_b"] - r["frame_a"], step)) for r in shots)
@@ -165,7 +222,16 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
             tt = sum(len(range(0, r["frame_b"] - r["frame_a"], step)) for r in sel)
             log.info("  %s: %d tomadas, %.1f min com homografia (%.0f%%)", "sem marcação" if auto else "marcadas",
                      len(sel), nf * step / sel[0]["fps"] / 60, 100 * nf / tt)
+    # o que a transmissão mostra: pessoas dentro do campo por quadro e fração do campo na imagem
+    def inside(p: np.ndarray) -> np.ndarray:
+        return (p[:, 3] >= 0) & (p[:, 3] <= pc["length_m"]) & (p[:, 4] >= 0) & (p[:, 4] <= pc["width_m"])
+    per_frame = np.concatenate([np.bincount(r["pos"][inside(r["pos"]), 0].astype(int), minlength=len(r["Hs"]))
+                                [np.isfinite(r["Hs"]).all((1, 2))] for r in shots])
+    vis = visibility(shots, flip, pc["length_m"], pc["width_m"], w, h, cfg["match"]["vis_cell_m"], cfg["match"]["vis_every"])
+    log.info("pessoas dentro do campo por quadro: mediana %d (p10 %d, p90 %d); campo visível por quadro: %.0f%% em média",
+             np.median(per_frame), *np.percentile(per_frame, [10, 90]), 100 * vis.mean())
     out_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out_dir / "visibilidade.png"), heatmap.colorize(vis, cfg, vmax=1.0))
     vmax = max(m.max() for m in maps.values())
     for team, m in maps.items():
         cv2.imwrite(str(out_dir / f"heatmap_time{team}.png"), heatmap.colorize(m, cfg, vmax=vmax))
