@@ -1,4 +1,5 @@
-"""Pipeline de uma partida completa: só as tomadas da câmera principal com homografia marcada.
+"""Pipeline de uma partida completa: as tomadas da câmera principal com homografia marcada e, com
+`match.auto_shots`, também as sem marcação (câmera achada pela relocalização em grade).
 
 Cada tomada é processada isoladamente (detecção, tracking, descritores de cor e propagação SIFT com
 H0 = I) e guardada em `outputs/<partida>/<tempo>/tomadas/<frame_a>/`. Depois, a câmera de cada quadro
@@ -84,36 +85,52 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
     kp = pitch.keypoints(pc["length_m"], pc["width_m"])
     C, good = camera.from_marks(marked, kp, w, h, lc["center_max_resid"])
     log.info("centro da câmera (m): %s, de %d marcações", np.round(C, 1), len(good))
+    todo = list(marked)
+    if cfg["match"]["auto_shots"]:                       # tomadas da câmera principal sem marcação
+        done = {(s["tempo"], s["frame_a"]) for s in marked}
+        for half in M_info["tempos"]:
+            todo += [{"tempo": half, "frame_a": t["frame_a"], "frame_b": t["frame_b"], "auto": True}
+                     for t in json.loads((out_dir / half / "shots.json").read_text())
+                     if t["main"] and (half, t["frame_a"]) not in done
+                     and t["frame_b"] - t["frame_a"] >= cfg["match"]["auto_min_frames"]]
     shots = []
-    for s in marked:
-        a, b, k = s["frame_a"], s["frame_b"], s["frame"] - s["frame_a"]
-        # a amostragem (1 a cada `step` quadros) começa em a0 para passar pelo quadro marcado
-        # (a 25 fps, a ferramenta de marcação anda 25 quadros por tecla, que não é múltiplo de 3)
-        a0, k = a + k % step, k - k % step
-        pts_img = np.array([q["img"] for q in s["points"]])
-        p_k, err = camera.anchor(pts_img, np.array([kp[q["name"]] for q in s["points"]]),
-                                 None, C, w, h, good)
-        if err > lc["anchor_max_px"]:
-            log.warning("tomada %s:%d descartada: cliques não batem com a câmera (erro mediano %.0f px); remarque",
-                        s["tempo"], a, err)
-            continue
+    for s in todo:
+        a, b = s["frame_a"], s["frame_b"]
+        if s.get("auto"):
+            a0, k, p_k = a, 0, None                      # a câmera sai da relocalização (`lines.relocalize`)
+        else:
+            k = s["frame"] - a
+            # a amostragem (1 a cada `step` quadros) começa em a0 para passar pelo quadro marcado
+            # (a 25 fps, a ferramenta de marcação anda 25 quadros por tecla, que não é múltiplo de 3)
+            a0, k = a + k % step, k - k % step
+            pts_img = np.array([q["img"] for q in s["points"]])
+            p_k, err = camera.anchor(pts_img, np.array([kp[q["name"]] for q in s["points"]]),
+                                     None, C, w, h, good)
+            if err > lc["anchor_max_px"]:
+                log.warning("tomada %s:%d descartada: cliques não batem com a câmera (erro mediano %.0f px); remarque",
+                            s["tempo"], a, err)
+                continue
         video = M_info["tempos"][s["tempo"]]["video"]
         cache = out_dir / s["tempo"] / "tomadas" / str(a0)
-        log.info("tomada %s:%d (%d quadros)", s["tempo"], a, b - a0)
+        log.info("tomada %s:%d (%d quadros)%s", s["tempo"], a, b - a0, " sem marcação" if s.get("auto") else "")
         r = process_shot(video, a0, b, cfg, cache)
         r["frame_a"] = a0
-        tag = hashlib.md5(json.dumps([p_k.round(5).tolist(), k, C.round(2).tolist(), lc, pc]).encode()).hexdigest()[:8]
+        tag = hashlib.md5(json.dumps([None if p_k is None else p_k.round(5).tolist(), k, C.round(2).tolist(), lc, pc]).encode()).hexdigest()[:8]
         f = cache / f"camera_{tag}.npz"
         if f.exists():
             Hs, score = (np.load(f)[x] for x in ("Hs", "score"))
         else:
-            Hs, score = homography.refine_lines(video, a0, b, k, p_k, C, r["M"], r["dets"], cfg)
+            Hs, score = homography.refine_lines(video, a0, b, k, p_k, C, r["M"], r["dets"], cfg, good)
             np.savez(f, Hs=Hs, score=score)
         Hs[~(score >= lc["min_score"])] = np.nan          # quadro sem linhas suficientes ou desalinhado
         r["Hs"], r["score"] = Hs, score
         shots.append(s | r)
     if not shots:
         raise RuntimeError("nenhuma tomada marcada e válida")
+    # quadros (do vídeo do tempo) com câmera aceita, para a avaliação contra o gabarito (scripts/evaluate.py camera)
+    (out_dir / "cameras.json").write_text(json.dumps([
+        {"tempo": r["tempo"], "frame_a": r["frame_a"], "frame_b": r["frame_b"], "auto": bool(r.get("auto")),
+         "ok": (r["frame_a"] + np.flatnonzero(np.isfinite(r["Hs"]).all((1, 2)))).tolist()} for r in shots]))
 
     # um k-means para a partida: primeiros `calib_frames` quadros processados de cada tomada
     sample = [d for r in shots for d in r["descs"][::step][:tc["calib_frames"]]]
@@ -141,6 +158,13 @@ def run(match_json: str | Path, cfg: dict, out_dir: str | Path | None = None) ->
     total = sum(len(range(0, r["frame_b"] - r["frame_a"], step)) for r in shots)
     log.info("%d tomadas, %.1f min com homografia (%.0f%% dos quadros das tomadas); %d posições",
              len(shots), n_frames * step / shots[0]["fps"] / 60, 100 * n_frames / total, len(pos))
+    for auto in (False, True):
+        sel = [r for r in shots if bool(r.get("auto")) == auto]
+        if sel:
+            nf = sum(int(np.isfinite(r["Hs"]).all((1, 2)).sum()) for r in sel)
+            tt = sum(len(range(0, r["frame_b"] - r["frame_a"], step)) for r in sel)
+            log.info("  %s: %d tomadas, %.1f min com homografia (%.0f%%)", "sem marcação" if auto else "marcadas",
+                     len(sel), nf * step / sel[0]["fps"] / 60, 100 * nf / tt)
     out_dir.mkdir(parents=True, exist_ok=True)
     vmax = max(m.max() for m in maps.values())
     for team, m in maps.items():

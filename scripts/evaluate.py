@@ -16,6 +16,11 @@ de linha, por descritor e com/sem remoção de grama e votação temporal (abla�
 `shots`: compara o filtro da câmera principal (outputs/<partida>/<tempo>/shots.json, de segment_match.py)
 com o Labels-cameras.json do SoccerNet (chave "soccernet_cameras" do JSON da partida), quadro a quadro:
 gabarito = "Main camera center/left/right" ao vivo (sem replay).
+
+  python scripts/evaluate.py camera data/annotations/liverpool-x-manchester_city.json
+
+`camera`: relocalização automática nos quadros marcados (erro contra os cliques) e quadros com câmera
+aceita (com e sem marcação) contra o Labels-cameras.json.
 """
 import argparse
 import json
@@ -301,6 +306,61 @@ def eval_shots(args: argparse.Namespace, cfg: dict) -> None:
     fig.tight_layout(); fig.savefig(f"outputs/figures/08_tomadas_vs_gt_{name}.png", dpi=150)
 
 
+def eval_camera(args: argparse.Namespace, cfg: dict) -> None:
+    """(a) Relocalização sem marcação, avaliada nos quadros marcados: para cada marcação, a busca em grade
+    (montada com as OUTRAS marcações) acha a câmera só pelas linhas, e os cliques dão o erro em px.
+    (b) Quadros com câmera aceita (outputs/<partida>/cameras.json, de run_match) contra o Labels-cameras.json
+    do SoccerNet: quantos são de fato da câmera principal ao vivo."""
+    from src import camera, detection, lines, match
+    from src.field_mask import field_mask
+    M = json.load(open(args.match)); name = Path(args.match).stem
+    cfg = match.match_cfg(cfg, M)
+    lc, pc, step = cfg["lines"], cfg["pitch"], cfg["video"]["frame_step"]
+    ann = json.load(open(f"data/annotations/{name}_homografias.json"))
+    marked = sorted((s for s in ann.values() if "H_img_to_pitch" in s), key=lambda s: (s["tempo"], s["frame_a"]))
+    kp = pitch.keypoints(pc["length_m"], pc["width_m"])
+    cap = cv2.VideoCapture(M["tempos"]["1"]["video"]); w, h = int(cap.get(3)), int(cap.get(4))
+    C, good = camera.from_marks(marked, kp, w, h, lc["center_max_resid"])
+    assert len(good) == len(marked)
+    samples = lines.model_samples(pc["length_m"], pc["width_m"], lc["sample_m"])
+    print("(a) relocalização nos quadros marcados (grade sem a própria marcação):")
+    errs, oks = [], []
+    for j, s in enumerate(marked):
+        video = M["tempos"][s["tempo"]]["video"]
+        a, k = s["frame_a"], s["frame"] - s["frame_a"]
+        a0 = a + k % step
+        dets = detection.detect_video(video, cfg, Path(f"outputs/{name}/{s['tempo']}/tomadas/{a0}/detections.npz"),
+                                      start=a0, end=s["frame_b"])
+        cap = cv2.VideoCapture(video); cap.set(cv2.CAP_PROP_POS_FRAMES, s["frame"]); _, img = cap.read()
+        lm, region = lines.line_mask(img, field_mask(img, cfg["field_mask"]), dets[s["frame"] - a0], lc)
+        grid = lines.pose_grid([g for i, g in enumerate(good) if i != j], lc)
+        p, sc = lines.relocalize(grid, C, lines.distance_map(lm, lc["max_px"]), region, samples, lc)
+        pi = np.array([q["img"] for q in s["points"]], float); pp = np.array([kp[q["name"]] for q in s["points"]])
+        e = np.inf if p is None else float(np.median(np.linalg.norm(camera.project(p, C, w, h, pp) - pi, axis=1)))
+        e_man = float(np.median(np.linalg.norm(camera.project(good[j], C, w, h, pp) - pi, axis=1)))
+        errs.append((e, e_man)); oks.append(sc >= lc["reloc_min_score"])
+        print(f"  {s['tempo']}:{a:<6d} encaixe {sc:.2f} {'aceita ' if oks[-1] else 'recusada'}  erro {e:6.1f} px (manual {e_man:.1f})")
+    e, e_man, ok = np.array(errs)[:, 0], np.array(errs)[:, 1], np.array(oks)
+    print(f"  aceitas {ok.sum()}/{len(ok)}; erro mediano das aceitas {np.median(e[ok]):.1f} px (manual {np.median(e_man[ok]):.1f});"
+          f" aceitas com erro > 10 px: {(e[ok] > 10).sum()}; recusadas com erro <= 10 px: {(e[~ok] <= 10).sum()}")
+
+    print("(b) quadros com câmera aceita × Labels-cameras do SoccerNet:")
+    cams = json.load(open(f"outputs/{name}/cameras.json"))
+    for auto in (False, True):
+        by, n_ok, hit, n_gt = {}, 0, 0, 0
+        for half, v in M["tempos"].items():
+            cap = cv2.VideoCapture(v["video"]); fps = cap.get(cv2.CAP_PROP_FPS)
+            gt, lab, labels = gt_main_frames(M["soccernet_cameras"], half, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), fps)
+            okf = np.array([f for c in cams if c["tempo"] == half and c["auto"] == auto for f in c["ok"]], int)
+            okf = okf[lab[okf] >= 0]                       # só onde há gabarito
+            n_ok += len(okf); hit += int(gt[okf].sum())
+            for i, c in zip(*np.unique(lab[okf], return_counts=True)):
+                key = labels[i % len(labels)] + (" (replay)" if i >= len(labels) else "")
+                by[key] = by.get(key, 0) + int(c)
+        print(f"  {'sem marcação' if auto else 'marcadas':13s}: {n_ok} quadros aceitos, {hit / max(n_ok, 1):.1%} são câmera principal "
+              f"ao vivo no gabarito; por rótulo: {dict(sorted(by.items(), key=lambda kv: -kv[1]))}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -314,6 +374,8 @@ def main() -> None:
     hm.add_argument("video"); hm.add_argument("--gt", required=True)
     sh = sub.add_parser("shots")
     sh.add_argument("match")
+    ca = sub.add_parser("camera")
+    ca.add_argument("match")
     ap.add_argument("--config", default="configs/default.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
@@ -325,6 +387,8 @@ def main() -> None:
         eval_heatmap(args, cfg)
     elif args.cmd == "shots":
         eval_shots(args, cfg)
+    elif args.cmd == "camera":
+        eval_camera(args, cfg)
 
 
 if __name__ == "__main__":

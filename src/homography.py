@@ -190,11 +190,16 @@ def anchor(M: np.ndarray, k: int, Hk: np.ndarray) -> np.ndarray:
 
 
 def refine_lines(video: str, a: int, b: int, k: int, p_k: np.ndarray, C: np.ndarray, M: np.ndarray,
-                 dets: list[np.ndarray], cfg: dict) -> tuple[np.ndarray, np.ndarray]:
+                 dets: list[np.ndarray], cfg: dict,
+                 candidates: list[np.ndarray] = ()) -> tuple[np.ndarray, np.ndarray]:
     """Câmera PTZ (`camera`) de cada quadro processado da tomada [a, b), a partir dos parâmetros `p_k`
     do quadro marcado a + k, indo para os dois lados. A propagação (M, de `propagate` com H0 = I) só
     prevê o movimento curto entre quadros processados (H_t ≈ H_prev · M_prev⁻¹ · M_t, projetada no
     modelo PTZ) e o ajuste às linhas (`lines.refine`) remove a deriva. `dets[i]` = caixas do quadro a + i.
+    Quadro abaixo de `min_score` não vira ponto de partida; perdida a câmera, a cada `reloc_every` quadros
+    processados ela é relocalizada por busca em grade (`lines.relocalize`) na faixa de pan/tilt/zoom das
+    câmeras em `candidates` (as marcadas da partida). Tomada sem marcação: `p_k = None` e k = 0; a câmera
+    só aparece quando a relocalização acerta, e segue daí.
     Devolve (H imagem→campo por quadro, fração dos pontos do modelo sobre as linhas; NaN sem estimativa)."""
     from src import camera, lines
     from src.field_mask import field_mask
@@ -207,20 +212,34 @@ def refine_lines(video: str, a: int, b: int, k: int, p_k: np.ndarray, C: np.ndar
     wh: list[int] = []
     p_k_ref: list[np.ndarray] = []                           # parâmetros ajustados no quadro marcado
 
+    lost = [0]                                               # quadros processados seguidos abaixo de min_score
+    grid = [lines.pose_grid(candidates, lc)] if len(candidates) else []
+
     def do(i: int, data: tuple[np.ndarray, np.ndarray], prev: tuple[int, np.ndarray] | None) -> tuple[int, np.ndarray]:
         w, h = wh
         if prev is None:
-            p0 = p_k
+            p0 = p_k                                         # None: tomada sem marcação, só a relocalização acha a câmera
         elif ok[prev[0]] and ok[i]:
             Hp = camera.to_homography(prev[1], C, w, h) @ np.linalg.inv(M[prev[0]]) @ M[i]
             p0 = camera.fit(Hp / Hp[2, 2], C, w, h, init=prev[1])
         else:
             p0 = prev[1]                                     # propagação perdida: só as linhas seguem a câmera
-        p, score[i], _ = lines.refine(p0, C, *data, samples, lc)
+        p = p0
+        if p0 is not None:
+            p, score[i], _ = lines.refine(p0, C, *data, samples, lc)
+        good = score[i] >= lc["min_score"]
+        if not good and grid and lost[0] % lc["reloc_every"] == 0:
+            q, s = lines.relocalize(grid[0], C, *data, samples, lc)
+            if s >= lc["reloc_min_score"]:
+                p, score[i], good = q, s, True
+        lost[0] = 0 if good else lost[0] + 1
+        if p is None:
+            return None
         Hs[i] = camera.to_homography(p, C, w, h)
         if i == k:
             p_k_ref.append(p)
-        return i, p
+        # um quadro desalinhado não serve de ponto de partida: o próximo parte do último bom
+        return (i, p) if good or prev is None else prev
 
     cap = cv2.VideoCapture(video)
     cap.set(cv2.CAP_PROP_POS_FRAMES, a)

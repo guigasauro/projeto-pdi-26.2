@@ -82,3 +82,51 @@ def _visible(params: np.ndarray, C: np.ndarray, region: np.ndarray, samples: np.
     ok &= (xy[:, 0] >= 0) & (xy[:, 0] < w) & (xy[:, 1] >= 0) & (xy[:, 1] < h)
     ok[ok] &= region[xy[ok, 1], xy[ok, 0]] > 0
     return ok
+
+
+def pose_grid(candidates: list[np.ndarray], cfg: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Grade de câmeras sem roll (rotações (N, 3, 3), log f (N,)) cobrindo a faixa de pan, tilt e zoom
+    das câmeras marcadas, com margem. Pan e tilt saem do eixo óptico no referencial do campo (Z para
+    dentro do gramado); a câmera da transmissão quase não gira em torno do eixo óptico."""
+    d = np.array([cv2.Rodrigues(np.asarray(c[:3], float))[0][2] for c in candidates])
+    pan, tilt, lf = np.arctan2(d[:, 1], d[:, 0]), np.arcsin(d[:, 2]), np.array([c[3] for c in candidates])
+    m, st = np.radians(cfg["grid_margin_deg"]), np.radians(cfg["grid_step_deg"])
+    P, T, F = (g.ravel() for g in np.meshgrid(np.arange(pan.min() - m, pan.max() + m, st),
+                                              np.arange(tilt.min() - m, tilt.max() + m, st),
+                                              np.arange(lf.min() - cfg["grid_logf_margin"], lf.max() + cfg["grid_logf_margin"],
+                                                        cfg["grid_logf_step"]), indexing="ij"))
+    z = np.c_[np.cos(T) * np.cos(P), np.cos(T) * np.sin(P), np.sin(T)]
+    x = np.cross([0.0, 0.0, 1.0], z)
+    x /= np.linalg.norm(x, axis=1, keepdims=True)
+    return np.stack([x, np.cross(z, x), z], axis=1), F
+
+
+def relocalize(grid: tuple[np.ndarray, np.ndarray], C: np.ndarray, dt: np.ndarray, region: np.ndarray,
+               samples: np.ndarray, cfg: dict) -> tuple[np.ndarray | None, float]:
+    """Câmera perdida: busca exaustiva na grade de pan/tilt/zoom (`pose_grid`). Cada pose é avaliada
+    pela fração dos pontos do modelo (amostrados a cada `reloc_sample_m`) que caem a até `coarse_px`
+    de uma linha na transformada de distância; as `reloc_top` melhores passam pelo `refine`.
+    Devolve (parâmetros, fração de pontos sobre as linhas) da melhor, ou (None, nan)."""
+    h, w = dt.shape
+    Rs, lf = grid
+    pts = samples[::max(1, round(cfg["reloc_sample_m"] / cfg["sample_m"]))]
+    X = np.c_[pts, np.zeros(len(pts))] - C
+    scores = np.zeros(len(lf))
+    for s in range(0, len(lf), 2000):                        # em blocos, para caber na memória
+        q = np.einsum("nij,pj->npi", Rs[s:s + 2000], X)
+        f = np.exp(lf[s:s + 2000])[:, None]
+        zc = np.where(q[..., 2] > 0, q[..., 2], np.nan)
+        u, v = f * q[..., 0] / zc + w / 2, f * q[..., 1] / zc + h / 2
+        ok = (u >= 0) & (u < w) & (v >= 0) & (v < h)
+        ui, vi = np.where(ok, u, 0).astype(int), np.where(ok, v, 0).astype(int)
+        ok &= region[vi, ui] > 0
+        n = ok.sum(1)
+        scores[s:s + 2000] = np.where(n >= cfg["reloc_min_visible"],
+                                      (ok & (dt[vi, ui] <= cfg["coarse_px"])).sum(1) / np.maximum(n, 1), 0)
+    best, best_s = None, np.nan
+    for j in np.argsort(-scores)[:cfg["reloc_top"]]:
+        p0 = np.r_[cv2.Rodrigues(Rs[j])[0].ravel(), lf[j]]
+        p, sc, _ = refine(p0, C, dt, region, samples, cfg)
+        if np.isfinite(sc) and not sc <= best_s:
+            best, best_s = p, sc
+    return best, best_s

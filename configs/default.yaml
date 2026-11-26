@@ -95,6 +95,8 @@ match:
   gk_zone_m: 6.0           # ignora quem está a menos disso da linha de fundo (goleiro)
   deep_zone_m: 30.0        # só conta quadros com alguém a menos disso do gol (jogo naquele lado)
   min_players: 6           # quadros com menos jogadores visíveis não votam
+  auto_shots: true         # processa também as tomadas da câmera principal sem marcação (relocalização)
+  auto_min_frames: 50      # tomadas sem marcação com menos de 2 s ficam de fora
 # Refinamento da homografia pelas linhas brancas (src/lines.py)
 lines:
   tophat_px: 15            # elemento do top-hat > largura da linha (~5-10 px em 576p) e < jogador
@@ -106,6 +108,16 @@ lines:
   inlier_px: 2.0           # ponto do modelo "sobre a linha" (fração = qualidade do quadro)
   sample_m: 0.5            # espaçamento dos pontos do modelo
   min_visible: 40          # menos pontos do modelo visíveis = não refina
+  reloc_every: 8           # câmera perdida: tenta relocalizar a cada N quadros processados (~1 s)
+  grid_step_deg: 1.0       # grade de pan/tilt da relocalização (1° ≈ 40 px com f = 2400)
+  grid_margin_deg: 5.0     # além da faixa das câmeras marcadas
+  grid_logf_step: 0.1      # zoom em passos de ~10%
+  grid_logf_margin: 0.2
+  reloc_sample_m: 2.0      # pontos do modelo na avaliação grosseira da grade
+  reloc_min_visible: 15
+  coarse_px: 8             # ponto "sobre a linha" na avaliação grosseira
+  reloc_top: 8             # melhores poses da grade que passam pelo refinamento
+  reloc_min_score: 0.75    # relocalização aceita; Liverpool 2:8911: certas 0.82-0.96, errada (janela sobreposta) 0.63
   prior_weight: 0.05       # peso do deslocamento dos cantos (px) contra o resíduo das linhas
   max_iter: 50
   center_max_resid: 0.01   # marcação entra na estimativa do centro da câmera se r1⟂r2, |r1|=|r2| quase valem (2:55061, quase colinear: 1.6)
