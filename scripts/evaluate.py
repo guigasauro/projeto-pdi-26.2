@@ -21,6 +21,11 @@ gabarito = "Main camera center/left/right" ao vivo (sem replay).
 
 `camera`: relocalização automática nos quadros marcados (erro contra os cliques) e quadros com câmera
 aceita (com e sem marcação) contra o Labels-cameras.json.
+
+  python scripts/evaluate.py goleiro [--gt-dir data/raw/SoccerNetGS/valid]
+
+`goleiro`: regra do goleiro pela posição aplicada às posições e IDs do gabarito de cada sequência do GSR:
+o ID escolhido é o goleiro? o time atribuído é o certo?
 """
 import argparse
 import json
@@ -361,6 +366,53 @@ def eval_camera(args: argparse.Namespace, cfg: dict) -> None:
               f"ao vivo no gabarito; por rótulo: {dict(sorted(by.items(), key=lambda kv: -kv[1]))}")
 
 
+def eval_goalkeeper(args: argparse.Namespace, cfg: dict) -> None:
+    """Regra do goleiro pela posição (`match.goalkeeper_tracks`) sobre o gabarito do SoccerNet GSR: posições e IDs do
+    próprio gabarito, 1 a cada `match.frame_step` quadros, e cada sequência como uma tomada. Mede se o ID escolhido em
+    cada gol é o goleiro e se o time atribuído (o que defende aquele gol) é o do gabarito, cuja chave `team` é o
+    lado que o time defende. Compara a regra só do mais recuado com a regra completa."""
+    from src import match
+    L, W, cm = 105.0, 68.0, cfg["match"]
+    rules = {"só o mais recuado": cm | {"gk_min_rows": np.inf}, "completa": cm}
+    tot = {k: np.zeros(4, int) for k in rules}           # IDs escolhidos, time certo, são goleiro, goleiros achados
+    n_gk, wrong = 0, {k: [] for k in rules}
+    n_field, field_wrong = 0, {k: 0 for k in rules}      # posições de jogadores de linha; quantas a regra erra
+    for gt in sorted(Path(args.gt_dir).glob("SNGS-*/Labels-GameState.json")):
+        rows, info = [], {}
+        for a in json.load(open(gt))["annotations"]:
+            f = int(a["image_id"]) % 1_000_000 - 1
+            if a["category_id"] not in (1, 2, 3) or not a.get("bbox_pitch") or f % cm["frame_step"]:
+                continue
+            p = a["bbox_pitch"]
+            rows.append((f, a["track_id"], 0, p["x_bottom_middle"] + L / 2, p["y_bottom_middle"] + W / 2))
+            info[a["track_id"]] = (a["attributes"]["role"], a["attributes"]["team"])
+        pos = np.array(rows, float)
+        near = np.abs(pos[:, 4] - W / 2) < pitch.PENALTY_WIDTH / 2
+        # goleiros que dá para achar: pelo menos gk_min_rows quadros junto ao próprio gol
+        for tid, (role, team) in info.items():
+            d = pos[:, 3] if team == "left" else L - pos[:, 3]
+            if role == "goalkeeper" and ((pos[:, 1] == tid) & near & (d < cm["gk_zone_m"])).sum() >= cm["gk_min_rows"]:
+                n_gk += 1
+            if role == "player":
+                n_field += int((pos[:, 1] == tid).sum())
+        for k, c in rules.items():
+            for tid, side in match.goalkeeper_tracks(pos, L, W, c).items():
+                role, team = info[tid]
+                ok = team == ("left" if side == 0 else "right")
+                tot[k] += [1, ok, role == "goalkeeper", role == "goalkeeper" and ok]
+                if not ok:
+                    wrong[k].append(f"{gt.parent.name}:{tid} ({role}, {team})")
+                    field_wrong[k] += int((pos[:, 1] == tid).sum()) if role == "player" else 0
+    print(f"{n_gk} goleiros com pelo menos {cm['gk_min_rows']} quadros junto ao próprio gol, em "
+          f"{len(list(Path(args.gt_dir).glob('SNGS-*')))} sequências")
+    for k, (n, ok, is_gk, found) in tot.items():
+        print(f"{k:18s}: {n} IDs escolhidos; time certo {ok}/{n} ({ok / max(n, 1):.1%}); são o goleiro {is_gk}/{n}; "
+              f"goleiros achados {found}/{n_gk} ({found / max(n_gk, 1):.1%}); posições de jogadores de linha "
+              f"passadas ao time errado {field_wrong[k]}/{n_field} ({field_wrong[k] / max(n_field, 1):.2%})")
+        if wrong[k]:
+            print("   time errado:", ", ".join(wrong[k]))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -376,6 +428,8 @@ def main() -> None:
     sh.add_argument("match")
     ca = sub.add_parser("camera")
     ca.add_argument("match")
+    gk = sub.add_parser("goleiro")
+    gk.add_argument("--gt-dir", default="data/raw/SoccerNetGS/valid")
     ap.add_argument("--config", default="configs/default.yaml")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
@@ -389,6 +443,8 @@ def main() -> None:
         eval_shots(args, cfg)
     elif args.cmd == "camera":
         eval_camera(args, cfg)
+    elif args.cmd == "goleiro":
+        eval_goalkeeper(args, cfg)
 
 
 if __name__ == "__main__":

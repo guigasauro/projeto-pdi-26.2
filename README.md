@@ -22,6 +22,7 @@ justificado por medição em `configs/default.yaml`.
 | Erro dos pés projetados no campo (homografia manual) | 0,58 m (mediana) | clip01 |
 | Times pela cor (histograma H-S + k-means + votação de 1 s) | acurácia 0,999 | clip01 |
 | Detecção (YOLO11n + filtro do gramado) | recall 0,933, precisão 0,948 | clip01 |
+| Goleiro pela posição (com posições e IDs do gabarito) | 54 de 56 goleiros achados; 57 de 59 IDs com o time certo | 58 sequências do GSR |
 | Separação das tomadas da câmera principal | F1 0,977 | Liverpool × City |
 | Câmera reencontrada sem marcação (deixando cada marcação de fora) | 3,8 px de erro mediano (clique manual: 2,6 px) | Liverpool × City |
 | Quadros aceitos sem marcação que são câmera principal | 99,5% | Liverpool × City |
@@ -112,6 +113,7 @@ GT=data/raw/SoccerNetGS/valid/SNGS-056/Labels-GameState.json
 python scripts/evaluate.py homography data/annotations/clip01.json --gt $GT
 python scripts/evaluate.py team data/clips/clip01.mp4 --gt $GT
 python scripts/evaluate.py heatmap data/clips/clip01.mp4 --gt $GT
+python scripts/evaluate.py goleiro             # regra do goleiro nas 58 sequências de validação do GSR
 ```
 
 ### Uma partida completa
